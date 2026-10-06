@@ -2,11 +2,14 @@
 
 Se abre con:  streamlit run app/Inicio.py   (o con "Abrir app.bat")
 """
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 import streamlit as st
 
 import acceso
 import datos
+import estado
 
 st.set_page_config(page_title="Robot FCI", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -19,6 +22,12 @@ r = datos.resumen_base()
 def miles(n):
     return f"{int(n):,}".replace(",", ".")
 
+
+# Semáforo: ¿están llegando datos nuevos? (hora de Argentina = UTC-3)
+hoy = datetime.now(timezone(timedelta(hours=-3))).date()
+for nivel, mensaje in estado.semaforo(hoy, r.hasta if pd.notna(r.hasta) else None,
+                                      r.ultima_cartera if pd.notna(r.ultima_cartera) else None):
+    {"ok": st.success, "aviso": st.warning, "error": st.error}[nivel](mensaje)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Fondos seguidos", f"{int(r.seguidos)} de {miles(r.fondos)}")
