@@ -27,9 +27,9 @@ c3.metric("Mayor peso", f"{r['pct_pn'].max():.2f}% del PN")
 por_fondo = r.groupby("fondo", as_index=False)["pct_pn"].sum().sort_values("pct_pn")
 st.plotly_chart(px.bar(por_fondo, x="pct_pn", y="fondo", orientation="h",
                        labels={"pct_pn": "% del PN (suma de coincidencias)", "fondo": ""}),
-                use_container_width=True)
+                width="stretch")
 st.dataframe(r.rename(columns={"fondo": "Fondo", "instrumento": "Instrumento", "pct_pn": "% del PN",
                                "categoria_resumen": "Rubro", "categoria_detallada": "Categoría",
                                "moneda": "Moneda", "fecha_cartera": "Cartera al"}),
-             hide_index=True, use_container_width=True,
+             hide_index=True, width="stretch",
              column_config={"% del PN": st.column_config.NumberColumn(format="%.2f")})

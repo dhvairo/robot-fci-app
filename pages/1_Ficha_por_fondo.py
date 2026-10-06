@@ -40,7 +40,7 @@ else:
         cols = ["Clase", "Moneda", "Fecha", "Cuotaparte", "Patrimonio", "Diario %", "7 días %",
                 "30 días %", "Mes %", "Año %", "12 meses %"]
         pct = {c: st.column_config.NumberColumn(c, format="%.2f") for c in cols if c.endswith("%")}
-        st.dataframe(tabla[cols], hide_index=True, use_container_width=True,
+        st.dataframe(tabla[cols], hide_index=True, width="stretch",
                      column_config={**pct, "Cuotaparte": st.column_config.NumberColumn(format="%.4f"),
                                     "Patrimonio": st.column_config.NumberColumn(format="%.0f")})
         st.caption("Rendimientos calculados por el robot sobre la cuotaparte; vacío = historia insuficiente "
@@ -57,7 +57,7 @@ else:
             fig = px.line(ser, x="fecha", y="base 100", color="nombre",
                           title="Evolución de la cuotaparte (base 100 en la primera fecha)")
             fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 # ───────── Cartera ─────────
 st.subheader("Cartera semanal")
@@ -78,26 +78,26 @@ else:
     resumen = activos.groupby("categoria_resumen", as_index=False)["pct_pn"].sum()
     resumen = resumen[resumen["pct_pn"] > 0]
     g1.plotly_chart(px.pie(resumen, names="categoria_resumen", values="pct_pn", hole=0.4,
-                           title="Por rubro"), use_container_width=True)
+                           title="Por rubro"), width="stretch")
     det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
     det = det[det["pct_pn"] > 0].sort_values("pct_pn")
     g2.plotly_chart(px.bar(det, x="pct_pn", y="categoria_detallada", orientation="h",
                            title="Por rubro, moneda e indexación (% del PN)",
                            labels={"pct_pn": "% del PN", "categoria_detallada": ""}),
-                    use_container_width=True)
+                    width="stretch")
     st.caption(f"Pasivos (implícitos): {pasivos:.2f}% del patrimonio. Se muestran aparte porque restan.")
     top = activos.sort_values("pct_pn", ascending=False).head(10)
     st.markdown("**10 mayores tenencias**")
     st.dataframe(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
         columns={"instrumento": "Instrumento", "pct_pn": "% del PN", "categoria_detallada": "Categoría"}),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
         column_config={"% del PN": st.column_config.NumberColumn(format="%.2f")})
     with st.expander("Cartera completa"):
         st.dataframe(cart.drop(columns=["orden"]).rename(columns={
             "rubro_cnv": "Rubro CNV", "instrumento": "Instrumento", "pct_pn": "% del PN",
             "categoria_resumen": "Rubro", "categoria_detallada": "Categoría", "moneda": "Moneda",
             "indexacion": "Indexación", "sin_clasificar": "Sin clasificar"}),
-            hide_index=True, use_container_width=True)
+            hide_index=True, width="stretch")
 
 # ───────── Hechos relevantes ─────────
 st.subheader("Hechos relevantes")
@@ -110,5 +110,5 @@ else:
     if filtro:
         h = h[h["tipo"].isin(filtro)]
     st.dataframe(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
-                                   "link": "Documento"}), hide_index=True, use_container_width=True,
+                                   "link": "Documento"}), hide_index=True, width="stretch",
                  column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})

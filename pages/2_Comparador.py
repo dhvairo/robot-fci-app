@@ -44,7 +44,7 @@ ser = ser[ser["fecha"] >= desde].copy()
 ser["base 100"] = ser.groupby("codigo_cafci")["cuotaparte"].transform(lambda s: s / s.iloc[0] * 100)
 fig = px.line(ser, x="fecha", y="base 100", color="etiqueta", title="Evolución (base 100 al inicio del período)")
 fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 res = ser.groupby(["etiqueta", "moneda"]).agg(primera=("fecha", "min"), ultima=("fecha", "max"),
                                               valor_inicial=("cuotaparte", "first"),
@@ -55,7 +55,7 @@ res = res.sort_values("Rendimiento %", ascending=False)
 st.dataframe(res.rename(columns={"etiqueta": "Clase", "moneda": "Moneda", "primera": "Desde",
                                  "ultima": "Hasta", "observaciones": "Datos"})[
     ["Clase", "Moneda", "Desde", "Hasta", "Datos", "Rendimiento %"]],
-    hide_index=True, use_container_width=True,
+    hide_index=True, width="stretch",
     column_config={"Rendimiento %": st.column_config.NumberColumn(format="%.2f")})
 if (res["primera"] > desde).any():
     st.caption("Algunas clases empiezan después del inicio del período: su rendimiento cubre menos días.")

@@ -45,7 +45,7 @@ else:
     e = e.rename(columns={"fuente": "Fuente", "nombre_archivo": "Archivo", "fecha_dato": "Fecha del dato",
                           "version": "Versión", "filas": "Filas", "controles_ok": "Controles OK",
                           "recibido_en": "Recibido"})
-    st.dataframe(e, hide_index=True, use_container_width=True)
+    st.dataframe(e, hide_index=True, width="stretch")
 
 st.markdown("""
 **Pantallas** (menú de la izquierda):
