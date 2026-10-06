@@ -10,6 +10,7 @@ import streamlit as st
 import acceso
 import datos
 import estado
+import formato
 
 st.set_page_config(page_title="Robot FCI", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -54,13 +55,16 @@ else:
     e = e.rename(columns={"fuente": "Fuente", "nombre_archivo": "Archivo", "fecha_dato": "Fecha del dato",
                           "version": "Versión", "filas": "Filas", "controles_ok": "Controles OK",
                           "recibido_en": "Recibido"})
-    st.dataframe(e, hide_index=True, width="stretch")
+    st.dataframe(formato.tabla(e, fechas=["Fecha del dato"], enteros=["Filas"], booleanos=["Controles OK"],
+                               fechas_hora_ar=["Recibido"]), hide_index=True, width="stretch")
+    st.caption("Horas en hora de Argentina.")
 
 st.markdown("""
 **Pantallas** (menú de la izquierda):
 - **Ficha por fondo:** clases, rendimientos, evolución de la cuotaparte, cartera y hechos relevantes.
 - **Comparador:** compara clases de distintos fondos en un período.
 - **Buscador de instrumentos:** en qué fondos seguidos está un instrumento y con qué peso.
+- **Filas a revisar:** rendimientos que difieren de los de la CAFCI.
 """)
 st.caption("Los rendimientos no consideran distribución de utilidades. Esta herramienta informa; "
            "no es una recomendación de inversión.")

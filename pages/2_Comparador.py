@@ -6,6 +6,7 @@ import streamlit as st
 
 import acceso
 import datos
+import formato
 
 st.set_page_config(page_title="Comparador", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -23,7 +24,9 @@ mon = st.radio("Moneda", monedas + ["Todas"], horizontal=True,
                     "USB = dólar billete (códigos de la CAFCI).")
 base = cl if mon == "Todas" else cl[cl["moneda"] == mon]
 pref = [e for e, n in zip(base["etiqueta"], base["clase"]) if " - Clase A" in n or " - Clase B" in n]
-elegidas = st.multiselect("Clases a comparar", base["etiqueta"].tolist(), default=pref[:6])
+# Clase A y B de cada fondo; si en esta moneda ningún fondo las tiene, las clases que haya (como en la ficha).
+por_defecto = pref[:6] or base["etiqueta"].tolist()[:6]
+elegidas = st.multiselect("Clases a comparar", base["etiqueta"].tolist(), default=por_defecto)
 if not elegidas:
     st.info("Elegí al menos una clase.")
     st.stop()
@@ -37,14 +40,14 @@ ultimo, primero = ser["fecha"].max(), ser["fecha"].min()
 periodos = {"7 días": 7, "30 días": 30, "90 días": 90, "6 meses": 182, "12 meses": 365, "Todo": None}
 per = st.radio("Período", list(periodos), index=1, horizontal=True)
 desde = primero if periodos[per] is None else max(primero, ultimo - timedelta(days=periodos[per]))
-st.caption(f"Desde {desde:%d/%m/%Y} hasta {ultimo:%d/%m/%Y}")
+st.caption(f"Desde {formato.fecha(desde)} hasta {formato.fecha(ultimo)}")
 
 ser = ser[ser["fecha"] >= desde].copy()
 # Cada clase parte de su primer valor dentro del período (base 100).
 ser["base 100"] = ser.groupby("codigo_cafci")["cuotaparte"].transform(lambda s: s / s.iloc[0] * 100)
 fig = px.line(ser, x="fecha", y="base 100", color="etiqueta", title="Evolución (base 100 al inicio del período)")
 fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
 
 res = ser.groupby(["etiqueta", "moneda"]).agg(primera=("fecha", "min"), ultima=("fecha", "max"),
                                               valor_inicial=("cuotaparte", "first"),
@@ -52,11 +55,11 @@ res = ser.groupby(["etiqueta", "moneda"]).agg(primera=("fecha", "min"), ultima=(
                                               observaciones=("fecha", "count")).reset_index()
 res["Rendimiento %"] = (res["valor_final"] / res["valor_inicial"] - 1) * 100
 res = res.sort_values("Rendimiento %", ascending=False)
-st.dataframe(res.rename(columns={"etiqueta": "Clase", "moneda": "Moneda", "primera": "Desde",
-                                 "ultima": "Hasta", "observaciones": "Datos"})[
-    ["Clase", "Moneda", "Desde", "Hasta", "Datos", "Rendimiento %"]],
-    hide_index=True, width="stretch",
-    column_config={"Rendimiento %": st.column_config.NumberColumn(format="%.2f")})
+mostrar = res.rename(columns={"etiqueta": "Clase", "moneda": "Moneda", "primera": "Desde",
+                              "ultima": "Hasta", "observaciones": "Datos"})[
+    ["Clase", "Moneda", "Desde", "Hasta", "Datos", "Rendimiento %"]]
+st.dataframe(formato.tabla(mostrar, fechas=["Desde", "Hasta"], enteros=["Datos"], numeros={"Rendimiento %": 2}),
+             hide_index=True, width="stretch")
 if (res["primera"] > desde).any():
     st.caption("Algunas clases empiezan después del inicio del período: su rendimiento cubre menos días.")
 if sel["moneda"].nunique() > 1:

@@ -117,3 +117,15 @@ def resumen_base():
                      "(select max(fecha_cartera) from carteras_fechas) as ultima_cartera, "
                      "(select count(*) from carteras where sin_clasificar) as sin_clasificar, "
                      "(select count(*) from hechos_relevantes) as hechos").iloc[0]
+
+
+def filas_a_revisar(dias=120):
+    """Rendimientos marcados "a revisar" (difieren de la CAFCI en más de 0,01 punto) de los últimos `dias` días."""
+    return consultar(
+        "select f.nombre as fondo, c.nombre as clase, r.fecha, r.diario, v.variacion_diaria_cafci, "
+        "r.diferencia_vs_cafci, r.nota from rendimientos r "
+        "join valores_diarios_ultima v using (codigo_cafci, fecha) "
+        "join clases c on c.codigo_cafci = r.codigo_cafci and c.vigente_hasta is null "
+        "join fondos f using (codigo_cnv) "
+        "where r.revisar and r.fecha >= (select max(fecha) from rendimientos) - %s "
+        "order by r.fecha desc, f.nombre, c.nombre", (dias,))

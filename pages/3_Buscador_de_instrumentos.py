@@ -4,6 +4,7 @@ import streamlit as st
 
 import acceso
 import datos
+import formato
 
 st.set_page_config(page_title="Buscador de instrumentos", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -22,14 +23,14 @@ if r.empty:
 c1, c2, c3 = st.columns(3)
 c1.metric("Líneas encontradas", len(r))
 c2.metric("Fondos que lo tienen", r["fondo"].nunique())
-c3.metric("Mayor peso", f"{r['pct_pn'].max():.2f}% del PN")
+c3.metric("Mayor peso", f"{formato.numero(r['pct_pn'].max())}% del PN")
 
 por_fondo = r.groupby("fondo", as_index=False)["pct_pn"].sum().sort_values("pct_pn")
-st.plotly_chart(px.bar(por_fondo, x="pct_pn", y="fondo", orientation="h",
-                       labels={"pct_pn": "% del PN (suma de coincidencias)", "fondo": ""}),
+st.plotly_chart(formato.plotly_es(px.bar(por_fondo, x="pct_pn", y="fondo", orientation="h",
+                                         labels={"pct_pn": "% del PN (suma de coincidencias)", "fondo": ""})),
                 width="stretch")
-st.dataframe(r.rename(columns={"fondo": "Fondo", "instrumento": "Instrumento", "pct_pn": "% del PN",
-                               "categoria_resumen": "Rubro", "categoria_detallada": "Categoría",
-                               "moneda": "Moneda", "fecha_cartera": "Cartera al"}),
-             hide_index=True, width="stretch",
-             column_config={"% del PN": st.column_config.NumberColumn(format="%.2f")})
+st.dataframe(formato.tabla(r.rename(columns={"fondo": "Fondo", "instrumento": "Instrumento", "pct_pn": "% del PN",
+                                             "categoria_resumen": "Rubro", "categoria_detallada": "Categoría",
+                                             "moneda": "Moneda", "fecha_cartera": "Cartera al"}),
+                           fechas=["Cartera al"], numeros={"% del PN": 2}),
+             hide_index=True, width="stretch")

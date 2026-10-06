@@ -4,6 +4,7 @@ import streamlit as st
 
 import acceso
 import datos
+import formato
 
 st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -39,14 +40,14 @@ else:
                                       "mes": "Mes %", "anio": "Año %", "meses_12": "12 meses %"})
         cols = ["Clase", "Moneda", "Fecha", "Cuotaparte", "Patrimonio", "Diario %", "7 días %",
                 "30 días %", "Mes %", "Año %", "12 meses %"]
-        pct = {c: st.column_config.NumberColumn(c, format="%.2f") for c in cols if c.endswith("%")}
-        st.dataframe(tabla[cols], hide_index=True, width="stretch",
-                     column_config={**pct, "Cuotaparte": st.column_config.NumberColumn(format="%.4f"),
-                                    "Patrimonio": st.column_config.NumberColumn(format="%.0f")})
-        st.caption("Rendimientos calculados por el robot sobre la cuotaparte; vacío = historia insuficiente "
-                   "para ese período. No consideran distribución de utilidades.")
+        st.dataframe(formato.tabla(tabla[cols], fechas=["Fecha"], enteros=["Patrimonio"],
+                                   numeros={"Cuotaparte": 4, **{c: 2 for c in cols if c.endswith("%")}}),
+                     hide_index=True, width="stretch")
+        st.caption("Rendimientos calculados por el robot sobre la cuotaparte; \"—\" = historia insuficiente (o clase "
+                   "sin patrimonio) para ese período. No consideran distribución de utilidades.")
         if revisar:
-            st.warning("Diario calculado distinto del de la CAFCI en: " + ", ".join(revisar))
+            st.warning("Diario, mes, año o 12 meses calculados distintos de los de la CAFCI en: " + ", ".join(revisar)
+                       + ". Ver la pantalla \"Filas a revisar\".")
 
         ser = datos.serie(sel["codigo_cafci"]).merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
         if ser["fecha"].nunique() < 2:
@@ -57,7 +58,7 @@ else:
             fig = px.line(ser, x="fecha", y="base 100", color="nombre",
                           title="Evolución de la cuotaparte (base 100 en la primera fecha)")
             fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
 
 # ───────── Cartera ─────────
 st.subheader("Cartera semanal")
@@ -67,37 +68,39 @@ if enc.empty or cart.empty:
     st.info("Todavía no hay cartera cargada para este fondo.")
 else:
     e = enc.iloc[0]
-    patrimonio = f"{e['patrimonio']:,.0f}".replace(",", ".")
-    st.caption(f"Cartera al {e['fecha_cartera']:%d/%m/%Y} · patrimonio {patrimonio} {e['moneda']} · "
-               f"{int(e['instrumentos'])} líneas")
+    st.caption(f"Cartera al {formato.fecha(e['fecha_cartera'])} · patrimonio {formato.entero(e['patrimonio'])} "
+               f"{e['moneda']} · {int(e['instrumentos'])} líneas")
     if int(e["sin_clasificar"]):
-        st.warning(f"{int(e['sin_clasificar'])} línea(s) sin clasificar ({e['pct_sin_clasificar']:.2f}% del PN).")
+        st.warning(f"{int(e['sin_clasificar'])} línea(s) sin clasificar ({formato.numero(e['pct_sin_clasificar'])}% del PN).")
     activos = cart[cart["categoria_resumen"] != "Pasivos"]
     pasivos = cart[cart["categoria_resumen"] == "Pasivos"]["pct_pn"].sum()
     g1, g2 = st.columns(2)
     resumen = activos.groupby("categoria_resumen", as_index=False)["pct_pn"].sum()
     resumen = resumen[resumen["pct_pn"] > 0]
-    g1.plotly_chart(px.pie(resumen, names="categoria_resumen", values="pct_pn", hole=0.4,
-                           title="Por rubro"), width="stretch")
+    g1.plotly_chart(formato.plotly_es(px.pie(resumen, names="categoria_resumen", values="pct_pn", hole=0.4,
+                                             title="Por rubro")), width="stretch")
     det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
     det = det[det["pct_pn"] > 0].sort_values("pct_pn")
-    g2.plotly_chart(px.bar(det, x="pct_pn", y="categoria_detallada", orientation="h",
-                           title="Por rubro, moneda e indexación (% del PN)",
-                           labels={"pct_pn": "% del PN", "categoria_detallada": ""}),
+    g2.plotly_chart(formato.plotly_es(px.bar(det, x="pct_pn", y="categoria_detallada", orientation="h",
+                                             title="Por rubro, moneda e indexación (% del PN)",
+                                             labels={"pct_pn": "% del PN", "categoria_detallada": ""})),
                     width="stretch")
-    st.caption(f"Pasivos (implícitos): {pasivos:.2f}% del patrimonio. Se muestran aparte porque restan.")
+    st.caption(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio. Se muestran aparte porque restan.")
+    dif = 100 - float(cart["pct_pn"].sum())
+    if abs(dif) > 0.05:
+        st.caption(f"Las líneas suman {formato.numero(100 - dif)}%: la diferencia de {formato.numero(dif)} puntos es "
+                   "redondeo de la CNV (cada renglón viene redondeado a 2 decimales).")
     top = activos.sort_values("pct_pn", ascending=False).head(10)
     st.markdown("**10 mayores tenencias**")
-    st.dataframe(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
+    st.dataframe(formato.tabla(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
         columns={"instrumento": "Instrumento", "pct_pn": "% del PN", "categoria_detallada": "Categoría"}),
-        hide_index=True, width="stretch",
-        column_config={"% del PN": st.column_config.NumberColumn(format="%.2f")})
+        numeros={"% del PN": 2}), hide_index=True, width="stretch")
     with st.expander("Cartera completa"):
-        st.dataframe(cart.drop(columns=["orden"]).rename(columns={
+        st.dataframe(formato.tabla(cart.drop(columns=["orden"]).rename(columns={
             "rubro_cnv": "Rubro CNV", "instrumento": "Instrumento", "pct_pn": "% del PN",
             "categoria_resumen": "Rubro", "categoria_detallada": "Categoría", "moneda": "Moneda",
             "indexacion": "Indexación", "sin_clasificar": "Sin clasificar"}),
-            hide_index=True, width="stretch")
+            numeros={"% del PN": 2}, booleanos=["Sin clasificar"]), hide_index=True, width="stretch")
 
 # ───────── Hechos relevantes ─────────
 st.subheader("Hechos relevantes")
@@ -109,6 +112,7 @@ else:
     filtro = st.multiselect("Filtrar por tipo", tipos)
     if filtro:
         h = h[h["tipo"].isin(filtro)]
-    st.dataframe(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
-                                   "link": "Documento"}), hide_index=True, width="stretch",
+    st.dataframe(formato.tabla(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
+                                                 "link": "Documento"}), fechas=["Fecha"]),
+                 hide_index=True, width="stretch",
                  column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})
