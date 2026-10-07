@@ -204,11 +204,14 @@ class ErrorPedido(Exception):
 
 
 def _url_pedidos():
+    """Usuario para anotar pedidos: PEDIDOS_DB_URL si está (en la PC); si no, el de lectura (APP_DB_URL), que tiene
+    el mismo permiso mínimo sobre pedidos_fondos (base_de_datos/usuario_app_anota_pedidos.sql). Así la app publicada
+    no necesita un secreto nuevo en Streamlit."""
     try:
         v = st.secrets["PEDIDOS_DB_URL"]
     except Exception:
         v = None
-    return v or os.environ.get("PEDIDOS_DB_URL")
+    return v or os.environ.get("PEDIDOS_DB_URL") or _url()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -234,7 +237,7 @@ def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None
     Devuelve el número del pedido."""
     url = _url_pedidos()
     if not url:
-        raise ErrorPedido("Falta PEDIDOS_DB_URL (archivo .env o secretos de la app): no se puede anotar el pedido.")
+        raise ErrorPedido("Falta PEDIDOS_DB_URL o APP_DB_URL (archivo .env o secretos de la app): no se puede anotar el pedido.")
     try:
         with psycopg.connect(url, connect_timeout=20) as conn:
             fila = conn.execute(
