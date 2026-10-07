@@ -197,6 +197,8 @@ def columnas_resumen(tabla):
 PESO_RENDIMIENTO = 0.70
 PESO_HONORARIO = 0.30
 MINIMO_GRUPO = 3
+MINIMO_ATIPICOS = 8        # con menos clases en el grupo no se marca ninguna como atípica
+FACTOR_VALLA = 3
 DESCARGO_EFICIENCIA = ("Ranking informativo. No constituye recomendación de inversión. Los rendimientos ya son netos de "
                        "honorarios y gastos; los rendimientos pasados no garantizan rendimientos futuros.")
 MOTIVO_HONORARIO_CERO = "Honorario 0% informado, verificar"
@@ -262,12 +264,15 @@ def ejecutar_eficiencia(clases):
     # Honorario de la sociedad gerente 0%: puede ser un dato faltante de la CAFCI, queda afuera (sigue visible en la tabla).
     cero = clases["motivo"].isna() & (clases["honorarios_sg"] == 0)
     clases.loc[cero, "motivo"] = MOTIVO_HONORARIO_CERO
-    # Rendimiento atípico: más de 3 veces la mediana de su grupo (o menos de -3 veces su valor absoluto). La mediana
-    # se calcula con las clases que siguen en carrera; con mediana negativa o cero el tope es 3 veces su valor absoluto.
+    # Rendimiento atípico (vallas): dentro de cada grupo, por encima de Q3 + 3 x (Q3 - Q1) o por debajo de Q1 - 3 x (Q3 - Q1).
+    # Q1 y Q3 se calculan con las clases que siguen en carrera (sin las de honorario 0% ni las de estado). Un grupo de
+    # menos de MINIMO_ATIPICOS de esas clases no marca ninguna.
     en_carrera = clases[clases["motivo"].isna()]
-    mediana = en_carrera.groupby("grupo")["rend_12m"].transform("median")
-    tope = 3 * mediana.abs()
-    atipica = (en_carrera["rend_12m"] > tope) | (en_carrera["rend_12m"] < -tope)
+    rend = en_carrera.groupby("grupo")["rend_12m"]
+    q1, q3 = rend.transform(lambda s: s.quantile(0.25)), rend.transform(lambda s: s.quantile(0.75))
+    valla = FACTOR_VALLA * (q3 - q1)
+    atipica = (((en_carrera["rend_12m"] > q3 + valla) | (en_carrera["rend_12m"] < q1 - valla))
+               & (rend.transform("size") >= MINIMO_ATIPICOS))
     clases.loc[atipica[atipica].index, "motivo"] = MOTIVO_ATIPICO
     ok = clases[clases["motivo"].isna()].copy()
     chicos = ok.groupby("grupo")["grupo"].transform("size") < MINIMO_GRUPO

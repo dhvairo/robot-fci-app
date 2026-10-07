@@ -121,8 +121,9 @@ else:
         "información y **no cambian el puntaje**.\n"
         "- Quedan afuera las clases sin 12 meses de historia, las que tienen algún estado (sin patrimonio, sin datos "
         "recientes, fuera de la planilla, con marca), las que informan **honorario de la sociedad gerente 0%** (puede ser "
-        "un dato faltante: verificar), las de **rendimiento atípico** (más de 3 veces la mediana de su grupo, o menos de "
-        "-3 veces su valor absoluto: verificar) y los grupos con menos de 3 clases. Los percentiles se calculan sin ellas; "
-        "siguen visibles en la tabla de arriba.")
+        "un dato faltante: verificar), las de **rendimiento atípico** (muy lejos del resto de su grupo: se pasa del cuarto "
+        "más alto, o queda por debajo del cuarto más bajo, por más de 3 veces el ancho de la franja central de "
+        "rendimientos del grupo; solo se controla en grupos de 8 clases o más: verificar) y los grupos con menos de 3 clases. Los percentiles se calculan sin "
+        "ellas; siguen visibles en la tabla de arriba.")
 
 st.caption(calculos.DESCARGO_EFICIENCIA)
