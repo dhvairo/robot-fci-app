@@ -179,6 +179,7 @@ def resumen_masivo(fondos, carteras, sumas, tenencias):
         fila["Cartera al"] = None if c is None else c["fecha_cartera"]
         fila["_codigo"], fila["_moneda"] = cod, f["moneda"]
         fila["_idea"] = tematica(f.to_dict())[1]
+        fila["_idea_pdf"] = _texto(f.get("tematica"))        # el PDF para clientes no lleva la marca "(provisorio)"
         filas.append(fila)
     return pd.DataFrame(filas)
 
@@ -198,6 +199,8 @@ PESO_HONORARIO = 0.30
 MINIMO_GRUPO = 3
 DESCARGO_EFICIENCIA = ("Ranking informativo. No constituye recomendación de inversión. Los rendimientos ya son netos de "
                        "honorarios y gastos; los rendimientos pasados no garantizan rendimientos futuros.")
+MOTIVO_HONORARIO_CERO = "Honorario 0% informado, verificar"
+MOTIVO_ATIPICO = "Rendimiento atípico, verificar"
 MOTIVO_ESTADO = {"(sin patrimonio)": "Sin patrimonio", "(sin datos recientes)": "Sin datos recientes",
                  "(fuera de la planilla)": "Fuera de la planilla"}
 
@@ -251,10 +254,21 @@ def ejecutar_eficiencia(clases):
     Devuelve (ranking, afuera):
       ranking: las clases comparables con 'puntaje', 'posicion' (1 = la mejor de su grupo; empatadas comparten lugar),
                'en_grupo' (cuántas clases tiene el grupo) y 'grupo' (texto), ordenado por puntaje de mayor a menor.
-      afuera:  las demás, con 'motivo' (estado, sin 12 meses, sin honorario, o grupo con menos de 3 clases)."""
+      afuera:  las demás, con 'motivo' (estado, sin 12 meses, sin honorario, honorario 0%, rendimiento atípico, o grupo
+               con menos de 3 clases). Los percentiles se calculan sin las que quedan afuera."""
     clases = clases.copy().reset_index(drop=True)
     clases["motivo"] = [motivo_exclusion(r) for _, r in clases.iterrows()]
     clases["grupo"] = [f"{t} · {grupo_moneda(m)}" for t, m in zip(clases["tipo_fondo"], clases["moneda"])]
+    # Honorario de la sociedad gerente 0%: puede ser un dato faltante de la CAFCI, queda afuera (sigue visible en la tabla).
+    cero = clases["motivo"].isna() & (clases["honorarios_sg"] == 0)
+    clases.loc[cero, "motivo"] = MOTIVO_HONORARIO_CERO
+    # Rendimiento atípico: más de 3 veces la mediana de su grupo (o menos de -3 veces su valor absoluto). La mediana
+    # se calcula con las clases que siguen en carrera; con mediana negativa o cero el tope es 3 veces su valor absoluto.
+    en_carrera = clases[clases["motivo"].isna()]
+    mediana = en_carrera.groupby("grupo")["rend_12m"].transform("median")
+    tope = 3 * mediana.abs()
+    atipica = (en_carrera["rend_12m"] > tope) | (en_carrera["rend_12m"] < -tope)
+    clases.loc[atipica[atipica].index, "motivo"] = MOTIVO_ATIPICO
     ok = clases[clases["motivo"].isna()].copy()
     chicos = ok.groupby("grupo")["grupo"].transform("size") < MINIMO_GRUPO
     clases.loc[ok[chicos].index, "motivo"] = f"Grupo con menos de {MINIMO_GRUPO} clases comparables"

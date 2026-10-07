@@ -57,7 +57,7 @@ def secciones(tabla):
         for _, f in t.iterrows():
             rubros = rubros_principales(f)
             fondos.append({
-                "nombre": f["Fondo"], "rubros": rubros, "idea": f["_idea"],
+                "nombre": f["Fondo"], "rubros": rubros, "idea": f["_idea"], "idea_pdf": f["_idea_pdf"],
                 "fecha": formato.fecha(f["Cartera al"]) if distintas else None,
                 "etiqueta": "\n".join([f["Fondo"]] + [f"{i}) {r}" for i, r in enumerate(rubros, start=1)])})
         out.append({"clave": clave, "titulo": f"{TITULO_BASE} {texto}", "subtitulo": sub, "aclaracion": ACLARACION,
@@ -159,7 +159,7 @@ def pdf(secs, titulo_documento=None):
             if f["fecha"]:
                 fondo.append(Paragraph(f"Cartera al {f['fecha']}", s_fecha))
             filas.append([fondo, Paragraph("<br/>".join(escape(r) for r in f["rubros"]) or formato.VACIO, s_celda),
-                          Paragraph(escape(f["idea"]), s_celda)])
+                          Paragraph(escape(f["idea_pdf"]), s_celda)])
         t = Table(filas, colWidths=[ancho * 0.24, ancho * 0.27, ancho * 0.49], repeatRows=1)
         estilo = [("BACKGROUND", (0, 0), (-1, 0), azul), ("VALIGN", (0, 0), (-1, -1), "TOP"),
                   ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor("#D0D7E2")),
