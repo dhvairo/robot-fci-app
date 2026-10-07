@@ -1,9 +1,12 @@
 """Filas a revisar: rendimientos que difieren de los de la CAFCI (auditoría C-02 y C-03)."""
 import streamlit as st
 
-import acceso
-import datos
-import formato
+import recarga
+recarga.al_dia()          # si la app se publicó mientras estaba abierta, se leen los módulos nuevos (sin "Reboot")
+
+import acceso  # noqa: E402
+import datos  # noqa: E402
+import formato  # noqa: E402
 
 st.set_page_config(page_title="Filas a revisar", page_icon="📈", layout="wide")
 acceso.requerir()

@@ -8,6 +8,8 @@ import psycopg
 import streamlit as st
 from dotenv import load_dotenv
 
+import calculos  # noqa: E402
+
 RAIZ = Path(__file__).resolve().parent
 load_dotenv(RAIZ / ".env")
 
@@ -40,6 +42,25 @@ def consultar(sql, params=None):
 def fondos_seguidos():
     return consultar("select codigo_cnv, nombre, moneda, estado, id_ficha_web from fondos "
                      "where seguido order by nombre")
+
+
+def fondos_ficha():
+    """Fondos seguidos con todos los datos de la cabecera de la ficha (pedido 2.1 de octubre).
+
+    patrimonio_neto = suma del patrimonio de sus clases con dato normal (sin marca de estado), en la moneda del fondo."""
+    return consultar(
+        "select f.codigo_cnv, f.nombre, f.moneda, f.estado, f.id_ficha_web, f.rubro, f.tipo_fondo, "
+        "f.clasificacion_cnv, f.region, f.horizonte, f.descripcion_breve, f.tematica, f.tematica_provisoria, "
+        "g.nombre as gerente, d.nombre as depositaria, "
+        "(select sum(p.patrimonio) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
+        "and p.marca_estado = '') as patrimonio_neto, "
+        "(select max(p.fecha_dato) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
+        "and p.marca_estado = '') as fecha_valores, "
+        "(select max(x.fecha_cartera) from carteras_fechas x where x.codigo_cnv = f.codigo_cnv) as fecha_cartera "
+        "from fondos f "
+        "left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
+        "left join sociedades d on d.tipo = 'depositaria' and d.codigo = f.codigo_depositaria "
+        "where f.seguido order by f.nombre")
 
 
 def clases_de_fondo(codigo_cnv):
@@ -103,20 +124,25 @@ def estado_robot():
                      "recibido_en from archivos_procesados order by recibido_en desc limit 20")
 
 
+def historia_por_clase():
+    """Primera y última fecha con cuotaparte numérica de cada clase (las filas que solo traen un estado no cuentan)."""
+    return consultar("select codigo_cafci, min(fecha) as primera, max(fecha) as ultima "
+                     "from valores_diarios_ultima where cuotaparte is not null group by codigo_cafci")
+
+
 def resumen_base():
-    return consultar("select (select count(*) from fondos) as fondos, "
-                     "(select count(*) from fondos where seguido) as seguidos, "
-                     "(select count(*) from clases where vigente_hasta is null) as clases, "
-                     "(select count(*) from valores_diarios_ultima) as valores, "
-                     # Primera fecha entre las clases activas (las suspendidas traen fechas de años atrás).
-                     "(select min(fecha) from valores_diarios_ultima where codigo_cafci in ("
-                     "select codigo_cafci from valores_diarios_ultima group by codigo_cafci "
-                     "having max(fecha) >= (select max(fecha) from valores_diarios_ultima) - 10)) as desde, "
-                     "(select max(fecha) from valores_diarios_ultima) as hasta, "
-                     "(select count(*) from carteras_fechas) as carteras, "
-                     "(select max(fecha_cartera) from carteras_fechas) as ultima_cartera, "
-                     "(select count(*) from carteras where sin_clasificar) as sin_clasificar, "
-                     "(select count(*) from hechos_relevantes) as hechos").iloc[0]
+    r = consultar("select (select count(*) from fondos) as fondos, "
+                  "(select count(*) from fondos where seguido) as seguidos, "
+                  "(select count(*) from clases where vigente_hasta is null) as clases, "
+                  "(select count(*) from valores_diarios_ultima) as valores, "
+                  "(select max(fecha) from valores_diarios_ultima) as hasta, "
+                  "(select count(*) from carteras_fechas) as carteras, "
+                  "(select max(fecha_cartera) from carteras_fechas) as ultima_cartera, "
+                  "(select count(*) from carteras where sin_clasificar) as sin_clasificar, "
+                  "(select count(*) from hechos_relevantes) as hechos").iloc[0].copy()
+    # Primera fecha con cuotaparte entre las clases activas (las suspendidas traen fechas de años atrás).
+    r["desde"] = calculos.historia_desde(historia_por_clase())
+    return r
 
 
 def ultimas_entradas():

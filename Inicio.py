@@ -7,11 +7,14 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
-import acceso
-import datos
-import estado
-import formato
-import horarios
+import recarga
+recarga.al_dia()          # si la app se publicó mientras estaba abierta, se leen los módulos nuevos (sin "Reboot")
+
+import acceso  # noqa: E402
+import datos  # noqa: E402
+import estado  # noqa: E402
+import formato  # noqa: E402
+import horarios  # noqa: E402
 
 st.set_page_config(page_title="Robot FCI", page_icon="📈", layout="wide")
 acceso.requerir()

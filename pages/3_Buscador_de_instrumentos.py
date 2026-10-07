@@ -2,9 +2,12 @@
 import plotly.express as px
 import streamlit as st
 
-import acceso
-import datos
-import formato
+import recarga
+recarga.al_dia()          # si la app se publicó mientras estaba abierta, se leen los módulos nuevos (sin "Reboot")
+
+import acceso  # noqa: E402
+import datos  # noqa: E402
+import formato  # noqa: E402
 
 st.set_page_config(page_title="Buscador de instrumentos", page_icon="📈", layout="wide")
 acceso.requerir()
