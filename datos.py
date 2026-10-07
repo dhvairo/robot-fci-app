@@ -63,6 +63,33 @@ def fondos_ficha():
         "where f.seguido order by f.nombre")
 
 
+def resumen_carteras():
+    """Para el Resumen masivo: de la última cartera de cada fondo seguido, su fecha y patrimonio, la suma del % del
+    PN por categoría resumen y sus 3 mayores tenencias. Devuelve (carteras, sumas, tenencias)."""
+    carteras = consultar(
+        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio from carteras_fechas x "
+        "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
+        "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
+    sumas = consultar("select c.codigo_cnv, c.categoria_resumen, sum(c.pct_pn) as pct "
+                      "from carteras_ultima c join fondos f using (codigo_cnv) where f.seguido "
+                      "group by c.codigo_cnv, c.categoria_resumen")
+    tenencias = consultar("select t.codigo_cnv, t.posicion, t.categoria_detallada, t.pct_pn from fondos_tenencias t "
+                          "join fondos f using (codigo_cnv) where f.seguido order by t.codigo_cnv, t.posicion")
+    return carteras, sumas, tenencias
+
+
+def clases_gestion():
+    """Todas las clases vigentes del catálogo con su foto diaria, costos y gerente (pantalla Gestión y eficiencia)."""
+    return consultar(
+        "select c.codigo_cafci, c.codigo_cnv, f.nombre as fondo, c.nombre as clase, g.nombre as gerente, "
+        "f.rubro, p.tipo_fondo, p.moneda, p.patrimonio, p.calificacion, p.rend_12m, p.marca_estado, "
+        "c.honorarios_sg, c.honorarios_sd, c.gastos_ordinarios, c.comision_ingreso, c.comision_rescate, "
+        "c.comision_transferencia, c.honorarios_exito, p.fecha_dato "
+        "from clases c join foto_clases p using (codigo_cafci) join fondos f on f.codigo_cnv = c.codigo_cnv "
+        "left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
+        "where c.vigente_hasta is null order by f.nombre, c.nombre")
+
+
 def clases_de_fondo(codigo_cnv):
     return consultar("select codigo_cafci, nombre, moneda from clases "
                      "where codigo_cnv = %s and vigente_hasta is null order by nombre", (codigo_cnv,))

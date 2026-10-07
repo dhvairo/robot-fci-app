@@ -33,6 +33,22 @@ def entero(x):
     return numero(x, 0)
 
 
+def numero_corto(x, minimo=2, maximo=4):
+    """Como `numero`, pero sin ceros de más: 1.5 -> '1,50' ; 2.7731 -> '2,7731' ; 0.1815 -> '0,1815' ; vacío -> '—'.
+
+    Se usa para honorarios y comisiones (se ven hasta 4 decimales) y, con minimo=0, para porcentajes cortos
+    (78.51 con maximo=1 -> '78,5' ; 30.0 -> '30')."""
+    if _es_nulo(x):
+        return VACIO
+    try:
+        float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    for dec in range(minimo, maximo + 1):
+        if abs(round(float(x), dec) - float(x)) < 1e-9 or dec == maximo:
+            return numero(x, dec)
+
+
 def fecha(d):
     """date, datetime, Timestamp o 'AAAA-MM-DD' -> '02/10/2026' ; vacío -> '—'."""
     if _es_nulo(d):
@@ -93,6 +109,20 @@ def tabla(df, fechas=(), numeros=None, enteros=(), fechas_hora=(), booleanos=(),
     for c in booleanos:
         df[c] = df[c].map(si_no)
     return df
+
+
+def tabla_ordenable(df, fechas=(), numeros=None, enteros=(), cortos=None, si_no_=()):
+    """Igual que `tabla`, pero devuelve un Styler: las columnas siguen siendo números (se pueden ordenar tocando el
+    encabezado) y solo se VEN en formato argentino. Las que no se nombran quedan como están.
+
+    cortos: {columna: (decimales mínimos, máximos)} (ver `numero_corto`)."""
+    df = df.copy()
+    formatos = {c: fecha for c in fechas}
+    formatos.update({c: (lambda x, d=dec: numero(x, d)) for c, dec in (numeros or {}).items()})
+    formatos.update({c: entero for c in enteros})
+    formatos.update({c: (lambda x, m=m: numero_corto(x, *m)) for c, m in (cortos or {}).items()})
+    formatos.update({c: si_no for c in si_no_})
+    return df.style.format(formatos, na_rep=VACIO)
 
 
 def plotly_es(fig, fechas_x=False):

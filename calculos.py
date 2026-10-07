@@ -115,3 +115,157 @@ def tematica(f):
         t = _texto(x)
         return t if t == formato.VACIO else t + marca
     return con_marca(f.get("descripcion_breve")), con_marca(f.get("tematica"))
+
+
+# ───────── Resumen masivo de fondos (pedido 3.1 de octubre) ─────────
+
+# Las 13 categorías resumen, en el orden de la solapa "Resumen" del Excel de carteras.
+CATEGORIAS_RESUMEN = ("Disponibilidades", "ON", "Bono corporativo", "Deuda soberana", "Deuda sub-soberana", "Pagaré",
+                      "Cheques", "Plazo fijo", "Caución", "Fideicomisos financieros", "FCI", "Acciones",
+                      "Otros activos")
+ETIQUETA_CATEGORIA = {"Deuda sub-soberana": "Deuda sub-soberana / provincial"}
+AJUSTE = "Ajuste a 100% (pasivos/redondeo)"
+MONEDA_RESUMEN = {"ARS": "ARS", "USD": "USD", "USB": "USD billete"}
+# Las notas al pie de la solapa "Resumen" del Excel (la última se adaptó: el gráfico ahora es el del informe).
+NOTAS_RESUMEN = (
+    "Patrimonio neto en la moneda de cada fondo (ARS o USD): no es comparable entre filas sin convertir a una misma moneda.",
+    "Columnas de tipo de activo: suma de '% del PN' por 'Categoría (resumen)' de cada cartera. Las tenencias 1°-3° salen "
+    "del detalle por moneda-indexación (rubro + moneda + indexación).",
+    "Sub-soberano = provincias. Indexación de soberanos en pesos: CER = Boncer, Lecer, Discount (DICP) y serie TZX "
+    "(TZXO7 asignado CER por nomenclatura). Dual = TXMD9. Dólar linked* = D31M7 (por nomenclatura, a verificar). Los "
+    "títulos corporativos se clasifican solo por moneda: la CNV no informa si son tasa fija, variable o ajustables.",
+    "'Ajuste a 100%': pasivos no detallados por la CNV (negativo = fondo apalancado) más redondeos.",
+    "Gráfico del informe: cada fondo es una porción de igual tamaño (1/N, con N = cantidad de fondos de esa moneda).",
+)
+COLUMNAS_TENENCIA = (("1° tenencia (rubro / moneda / indexación)", "% 1°"), ("2° tenencia", "% 2°"),
+                     ("3° tenencia", "% 3°"))
+
+
+def _pct(x):
+    return None if formato._es_nulo(x) else float(x)
+
+
+def resumen_masivo(fondos, carteras, sumas, tenencias):
+    """La tabla de la solapa "Resumen" del Excel, para los fondos elegidos (una fila por fondo, en el orden de `fondos`).
+
+    fondos:    codigo_cnv, nombre, moneda, clasificacion_cnv, descripcion_breve, tematica, tematica_provisoria
+    carteras:  codigo_cnv, fecha_cartera, patrimonio          (la última cartera de cada fondo)
+    sumas:     codigo_cnv, categoria_resumen, pct              (suma del % del PN por categoría resumen)
+    tenencias: codigo_cnv, posicion (1 a 3), categoria_detallada, pct_pn
+
+    Los porcentajes quedan en puntos (94,44 = 94,44%). Las columnas que empiezan con "_" son para el informe."""
+    import pandas as pd
+    cart = {int(r["codigo_cnv"]): r for _, r in carteras.iterrows()}
+    por_cat = {}
+    for _, r in sumas.iterrows():
+        por_cat.setdefault(int(r["codigo_cnv"]), {})[r["categoria_resumen"]] = float(r["pct"])
+    ten = {}
+    for _, r in tenencias.iterrows():
+        ten.setdefault(int(r["codigo_cnv"]), {})[int(r["posicion"])] = (r["categoria_detallada"], _pct(r["pct_pn"]))
+    filas = []
+    for _, f in fondos.iterrows():
+        cod = int(f["codigo_cnv"])
+        c, cats = cart.get(cod), por_cat.get(cod, {})
+        fila = {"Fondo": f["nombre"], "Moneda": MONEDA_RESUMEN.get(f["moneda"], formato.VACIO),
+                "Clasificación CNV": _texto(f.get("clasificacion_cnv")),   # solo la de la ficha de la CNV, nunca la de la CAFCI
+                "Descripción breve": _texto(f.get("descripcion_breve")),
+                "Patrimonio neto": None if c is None else _pct(c["patrimonio"])}
+        for cat in CATEGORIAS_RESUMEN:
+            fila[ETIQUETA_CATEGORIA.get(cat, cat)] = cats.get(cat, 0.0)
+        fila[AJUSTE] = round(100 - sum(cats.get(cat, 0.0) for cat in CATEGORIAS_RESUMEN), 4)
+        for pos, (col, col_pct) in enumerate(COLUMNAS_TENENCIA, start=1):
+            nombre, pct = ten.get(cod, {}).get(pos, (formato.VACIO, None))
+            fila[col], fila[col_pct] = nombre, pct
+        fila["Cartera al"] = None if c is None else c["fecha_cartera"]
+        fila["_codigo"], fila["_moneda"] = cod, f["moneda"]
+        fila["_idea"] = tematica(f.to_dict())[1]
+        filas.append(fila)
+    return pd.DataFrame(filas)
+
+
+def columnas_resumen(tabla):
+    """Columnas de `resumen_masivo` que se ven en pantalla ('Cartera al' solo si las fechas de cartera difieren)."""
+    cols = [c for c in tabla.columns if not c.startswith("_")]
+    if tabla["Cartera al"].nunique(dropna=False) <= 1:
+        cols.remove("Cartera al")
+    return cols
+
+
+# ───────── Gestión y eficiencia (pedido 3.2 de octubre) ─────────
+
+PESO_RENDIMIENTO = 0.70
+PESO_HONORARIO = 0.30
+MINIMO_GRUPO = 3
+DESCARGO_EFICIENCIA = ("Ranking informativo. No constituye recomendación de inversión. Los rendimientos ya son netos de "
+                       "honorarios y gastos; los rendimientos pasados no garantizan rendimientos futuros.")
+MOTIVO_ESTADO = {"(sin patrimonio)": "Sin patrimonio", "(sin datos recientes)": "Sin datos recientes",
+                 "(fuera de la planilla)": "Fuera de la planilla"}
+
+
+def clases_a_mostrar(clases, todas=False):
+    """Por defecto, Clase A y B de cada fondo (si el fondo no las tiene, las que haya); con `todas`, todas las clases."""
+    if todas or clases.empty:
+        return clases
+    ab = clases["clase"].str.contains(r"Clase [AB]\b", regex=True)
+    tiene = ab.groupby(clases["codigo_cnv"]).transform("any")
+    return clases[ab | ~tiene]
+
+
+def orden_inicial(clases):
+    """De mayor a menor honorario de la sociedad gerente (los sin dato al final); a igualdad, por nombre."""
+    return clases.sort_values(["honorarios_sg", "clase"], ascending=[False, True], na_position="last",
+                              kind="stable").reset_index(drop=True)
+
+
+def grupo_moneda(moneda):
+    return "Pesos" if moneda in PESOS else "Dólares"
+
+
+def motivo_exclusion(c):
+    """Por qué una clase no entra al ranking (None si entra). Cualquier estado de la foto la deja afuera."""
+    estado = c.get("marca_estado")
+    if not formato._es_nulo(estado) and str(estado).strip():
+        estado = str(estado).strip()
+        return MOTIVO_ESTADO.get(estado, f"Con marca {estado} en la planilla (suspendido o en liquidación)")
+    if formato._es_nulo(c.get("rend_12m")):
+        return "Sin 12 meses de historia"
+    if formato._es_nulo(c.get("honorarios_sg")):
+        return "Sin honorario de la sociedad gerente informado"
+    if formato._es_nulo(c.get("tipo_fondo")):
+        return "Sin tipo de fondo"
+    return None
+
+
+def _percentil(serie, mas_alto_es_mejor):
+    """0 a 100 dentro del grupo: el peor vale 0 y el mejor 100; los empatados comparten el promedio de sus lugares."""
+    n = len(serie)
+    p = (serie.rank(method="average") - 1) / (n - 1) * 100       # rank 1 = el valor más bajo
+    return p if mas_alto_es_mejor else 100 - p
+
+
+def ejecutar_eficiencia(clases):
+    """Puntaje de eficiencia 0-100 = 70% percentil del rendimiento 12m (más alto, mejor) + 30% percentil del honorario
+    de la sociedad gerente (más bajo, mejor), SOLO dentro del mismo tipo de fondo y moneda. Los demás costos no entran.
+
+    clases: DataFrame con tipo_fondo, moneda, rend_12m, honorarios_sg, marca_estado (y lo que se quiera mostrar).
+    Devuelve (ranking, afuera):
+      ranking: las clases comparables con 'puntaje', 'posicion' (1 = la mejor de su grupo; empatadas comparten lugar),
+               'en_grupo' (cuántas clases tiene el grupo) y 'grupo' (texto), ordenado por puntaje de mayor a menor.
+      afuera:  las demás, con 'motivo' (estado, sin 12 meses, sin honorario, o grupo con menos de 3 clases)."""
+    clases = clases.copy().reset_index(drop=True)
+    clases["motivo"] = [motivo_exclusion(r) for _, r in clases.iterrows()]
+    clases["grupo"] = [f"{t} · {grupo_moneda(m)}" for t, m in zip(clases["tipo_fondo"], clases["moneda"])]
+    ok = clases[clases["motivo"].isna()].copy()
+    chicos = ok.groupby("grupo")["grupo"].transform("size") < MINIMO_GRUPO
+    clases.loc[ok[chicos].index, "motivo"] = f"Grupo con menos de {MINIMO_GRUPO} clases comparables"
+    ok = ok[~chicos].copy()
+    if ok.empty:
+        ok["puntaje"], ok["posicion"], ok["en_grupo"] = [], [], []
+    else:
+        ok["en_grupo"] = ok.groupby("grupo")["grupo"].transform("size")
+        ok["puntaje"] = (PESO_RENDIMIENTO * ok.groupby("grupo")["rend_12m"].transform(lambda s: _percentil(s, True))
+                         + PESO_HONORARIO * ok.groupby("grupo")["honorarios_sg"].transform(lambda s: _percentil(s, False)))
+        ok["posicion"] = ok.groupby("grupo")["puntaje"].rank(method="min", ascending=False).astype(int)
+        ok = ok.sort_values(["puntaje", "honorarios_sg", "clase"], ascending=[False, True, True], kind="stable")
+    afuera = clases[clases["motivo"].notna()]
+    return ok.drop(columns="motivo").reset_index(drop=True), afuera.reset_index(drop=True)
