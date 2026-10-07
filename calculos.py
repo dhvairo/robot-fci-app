@@ -198,11 +198,14 @@ PESO_RENDIMIENTO = 0.70
 PESO_HONORARIO = 0.30
 MINIMO_GRUPO = 3
 MINIMO_ATIPICOS = 8        # con menos clases en el grupo no se marca ninguna como atípica
-FACTOR_VALLA = 3
+FACTOR_VALLA = 3           # entre esta valla y la extrema: entra al ranking con una marca "revisar"
+FACTOR_VALLA_EXTREMA = 10  # más allá de esta valla: afuera, error de datos probable
 DESCARGO_EFICIENCIA = ("Ranking informativo. No constituye recomendación de inversión. Los rendimientos ya son netos de "
                        "honorarios y gastos; los rendimientos pasados no garantizan rendimientos futuros.")
 MOTIVO_HONORARIO_CERO = "Honorario 0% informado, verificar"
-MOTIVO_ATIPICO = "Rendimiento atípico, verificar"
+MOTIVO_ATIPICO = "Error de datos probable, verificar"
+MARCA_MUY_ALTO = "Rendimiento muy alto, revisar"
+MARCA_MUY_BAJO = "Rendimiento muy bajo, revisar"
 MOTIVO_ESTADO = {"(sin patrimonio)": "Sin patrimonio", "(sin datos recientes)": "Sin datos recientes",
                  "(fuera de la planilla)": "Fuera de la planilla"}
 
@@ -255,8 +258,9 @@ def ejecutar_eficiencia(clases):
     clases: DataFrame con tipo_fondo, moneda, rend_12m, honorarios_sg, marca_estado (y lo que se quiera mostrar).
     Devuelve (ranking, afuera):
       ranking: las clases comparables con 'puntaje', 'posicion' (1 = la mejor de su grupo; empatadas comparten lugar),
-               'en_grupo' (cuántas clases tiene el grupo) y 'grupo' (texto), ordenado por puntaje de mayor a menor.
-      afuera:  las demás, con 'motivo' (estado, sin 12 meses, sin honorario, honorario 0%, rendimiento atípico, o grupo
+               'en_grupo' (cuántas clases tiene el grupo), 'grupo' (texto) y 'marca' (rendimiento muy alto o muy bajo, a
+               revisar; vacía si no), ordenado por puntaje de mayor a menor.
+      afuera:  las demás, con 'motivo' (estado, sin 12 meses, sin honorario, honorario 0%, error de datos probable, o grupo
                con menos de 3 clases). Los percentiles se calculan sin las que quedan afuera."""
     clases = clases.copy().reset_index(drop=True)
     clases["motivo"] = [motivo_exclusion(r) for _, r in clases.iterrows()]
@@ -264,16 +268,24 @@ def ejecutar_eficiencia(clases):
     # Honorario de la sociedad gerente 0%: puede ser un dato faltante de la CAFCI, queda afuera (sigue visible en la tabla).
     cero = clases["motivo"].isna() & (clases["honorarios_sg"] == 0)
     clases.loc[cero, "motivo"] = MOTIVO_HONORARIO_CERO
-    # Rendimiento atípico (vallas): dentro de cada grupo, por encima de Q3 + 3 x (Q3 - Q1) o por debajo de Q1 - 3 x (Q3 - Q1).
+    # Rendimiento atípico en dos niveles, dentro de cada grupo (IQR = Q3 - Q1):
+    #   más allá de Q3 + 10 x IQR o de Q1 - 10 x IQR: afuera (error de datos probable);
+    #   entre la valla de 3 x IQR y la de 10 x IQR: entra al ranking con una marca "revisar".
     # Q1 y Q3 se calculan con las clases que siguen en carrera (sin las de honorario 0% ni las de estado). Un grupo de
-    # menos de MINIMO_ATIPICOS de esas clases no marca ninguna.
+    # menos de MINIMO_ATIPICOS de esas clases no marca ni saca ninguna.
     en_carrera = clases[clases["motivo"].isna()]
     rend = en_carrera.groupby("grupo")["rend_12m"]
     q1, q3 = rend.transform(lambda s: s.quantile(0.25)), rend.transform(lambda s: s.quantile(0.75))
-    valla = FACTOR_VALLA * (q3 - q1)
-    atipica = (((en_carrera["rend_12m"] > q3 + valla) | (en_carrera["rend_12m"] < q1 - valla))
-               & (rend.transform("size") >= MINIMO_ATIPICOS))
-    clases.loc[atipica[atipica].index, "motivo"] = MOTIVO_ATIPICO
+    iqr = q3 - q1
+    r12 = en_carrera["rend_12m"]
+    grande = rend.transform("size") >= MINIMO_ATIPICOS
+    extrema = ((r12 > q3 + FACTOR_VALLA_EXTREMA * iqr) | (r12 < q1 - FACTOR_VALLA_EXTREMA * iqr)) & grande
+    clases.loc[extrema[extrema].index, "motivo"] = MOTIVO_ATIPICO
+    clases["marca"] = ""
+    alto = (r12 > q3 + FACTOR_VALLA * iqr) & ~extrema & grande
+    bajo = (r12 < q1 - FACTOR_VALLA * iqr) & ~extrema & grande
+    clases.loc[alto[alto].index, "marca"] = MARCA_MUY_ALTO
+    clases.loc[bajo[bajo].index, "marca"] = MARCA_MUY_BAJO
     ok = clases[clases["motivo"].isna()].copy()
     chicos = ok.groupby("grupo")["grupo"].transform("size") < MINIMO_GRUPO
     clases.loc[ok[chicos].index, "motivo"] = f"Grupo con menos de {MINIMO_GRUPO} clases comparables"

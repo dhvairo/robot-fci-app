@@ -98,7 +98,11 @@ else:
         ranking = ranking.assign(**{
             "Puntaje de eficiencia (0-100)": ranking["puntaje"], "Posición": ranking["posicion"],
             "Grupo de comparación": ranking["grupo"] + " (" + ranking["en_grupo"].astype(str) + " clases)"})
-        t = armar(ranking, ["Puntaje de eficiencia (0-100)", "Posición", "Grupo de comparación"])
+        extra = ["Puntaje de eficiencia (0-100)", "Posición", "Grupo de comparación"]
+        if ranking["marca"].ne("").any():
+            ranking = ranking.assign(Marca=ranking["marca"].replace("", None))
+            extra.append("Marca")
+        t = armar(ranking, extra)
         st.caption("Ordenadas por puntaje. La posición es dentro de cada grupo (mismo tipo de fondo y moneda).")
         mostrar(t, numeros_extra={"Puntaje de eficiencia (0-100)": 1}, enteros_extra=["Posición"])
     st.subheader(f"Quedan afuera del ranking ({formato.entero(len(afuera))} clases)")
@@ -121,9 +125,11 @@ else:
         "información y **no cambian el puntaje**.\n"
         "- Quedan afuera las clases sin 12 meses de historia, las que tienen algún estado (sin patrimonio, sin datos "
         "recientes, fuera de la planilla, con marca), las que informan **honorario de la sociedad gerente 0%** (puede ser "
-        "un dato faltante: verificar), las de **rendimiento atípico** (muy lejos del resto de su grupo: se pasa del cuarto "
-        "más alto, o queda por debajo del cuarto más bajo, por más de 3 veces el ancho de la franja central de "
-        "rendimientos del grupo; solo se controla en grupos de 8 clases o más: verificar) y los grupos con menos de 3 clases. Los percentiles se calculan sin "
-        "ellas; siguen visibles en la tabla de arriba.")
+        "un dato faltante: verificar), las de **error de datos probable** (muy lejos del resto de su grupo: se pasa del cuarto "
+        "más alto, o queda por debajo del cuarto más bajo, por más de 10 veces el ancho de la franja central de "
+        "rendimientos del grupo: verificar) y los grupos con menos de 3 clases. Si el rendimiento se pasa por entre 3 y 10 "
+        "veces ese ancho, la clase **entra al ranking normalmente** y lleva la marca **\"Rendimiento muy alto, revisar\"** "
+        "(o \"muy bajo\"). Esto solo se controla en grupos de 8 clases o más. Los percentiles se calculan sin las que "
+        "quedan afuera, que siguen visibles en la tabla de arriba.")
 
 st.caption(calculos.DESCARGO_EFICIENCIA)
