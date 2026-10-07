@@ -63,6 +63,14 @@ def fecha_hora_ar(d):
     return fecha_hora(d)
 
 
+def texto_o_guion(x):
+    """Texto de un dato opcional (temática, descripción breve): vacío, nulo o solo espacios -> '—'."""
+    if _es_nulo(x):
+        return VACIO
+    t = str(x).strip()
+    return t or VACIO
+
+
 def si_no(x):
     return VACIO if _es_nulo(x) else ("Sí" if x else "No")
 

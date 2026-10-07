@@ -1,0 +1,45 @@
+{
+  "corridas": [
+    {
+      "flujo": "robot_carteras.yml",
+      "nombre": "Robot de carteras (CNV)",
+      "cron_utc": "0 13 * * *",
+      "hora_ar": "10:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "flujo": "robot_diario.yml",
+      "nombre": "Robot diario (planilla CAFCI)",
+      "cron_utc": "30 0 * * 2-6",
+      "hora_ar": "21:30",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "flujo": "robot_diario.yml",
+      "nombre": "Robot diario (planilla CAFCI)",
+      "cron_utc": "30 19 * * 2-6",
+      "hora_ar": "16:30",
+      "dias_ar": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ]
+}

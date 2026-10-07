@@ -11,6 +11,7 @@ import acceso
 import datos
 import estado
 import formato
+import horarios
 
 st.set_page_config(page_title="Robot FCI", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -46,6 +47,18 @@ c8.metric("Líneas sin clasificar", int(r.sin_clasificar),
           help="Instrumentos de las carteras sin regla de clasificación (config/reglas_clasificacion.csv)")
 if int(r.sin_clasificar):
     st.warning("Hay instrumentos sin clasificar: agregá una regla en config/reglas_clasificacion.csv.")
+
+st.subheader("Cuándo se actualiza cada dato")
+ahora = datetime.now(horarios.ARGENTINA)
+u = datos.ultimas_entradas()
+cuadro = pd.DataFrame(
+    horarios.filas_cuadro(horarios.cargar(), ahora, {k: u[k] for k in u.index}, formato.fecha_hora_ar),
+    columns=["Dato", "Cuándo se actualiza", "Última vez que entró un dato nuevo", "Próxima corrida programada"])
+st.dataframe(formato.tabla(cuadro), hide_index=True, width="stretch")   # ya viene en formato argentino
+st.caption("Hora de Argentina. Los horarios salen de los flujos del robot en GitHub (GitHub puede demorar el inicio "
+           "unos minutos). La CNV publica las carteras con 2-3 semanas de demora. La foto de todas las clases trae "
+           "rendimientos, patrimonio y calificación de cada clase del catálogo. Si una planilla no trae datos nuevos, "
+           "no se guarda nada.")
 
 st.subheader("Últimos archivos procesados por el robot")
 e = datos.estado_robot()

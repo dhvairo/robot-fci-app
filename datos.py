@@ -119,6 +119,15 @@ def resumen_base():
                      "(select count(*) from hechos_relevantes) as hechos").iloc[0]
 
 
+def ultimas_entradas():
+    """Última vez que entró un dato nuevo de cada fuente (momentos con zona horaria)."""
+    return consultar(
+        "select (select max(recibido_en) from archivos_procesados where fuente = 'CAFCI' and version = 1) as noche, "
+        "(select max(recibido_en) from archivos_procesados where fuente = 'CAFCI' and version > 1) as tarde, "
+        "(select max(recibido_en) from archivos_procesados where fuente = 'CNV') as carteras, "
+        "(select max(actualizado_en) from foto_clases) as foto").iloc[0]
+
+
 def filas_a_revisar(dias=120):
     """Rendimientos marcados "a revisar" (difieren de la CAFCI en más de 0,01 punto) de los últimos `dias` días."""
     return consultar(
