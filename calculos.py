@@ -1,5 +1,8 @@
 """Lógica de las pantallas que se puede probar sin Streamlit ni base: filtros, períodos y cabecera de la ficha."""
+import unicodedata
 from datetime import timedelta
+
+import pandas as pd
 
 import formato
 
@@ -300,3 +303,80 @@ def ejecutar_eficiencia(clases):
         ok = ok.sort_values(["puntaje", "honorarios_sg", "clase"], ascending=[False, True, True], kind="stable")
     afuera = clases[clases["motivo"].notna()]
     return ok.drop(columns="motivo").reset_index(drop=True), afuera.reset_index(drop=True)
+
+
+# ───────── Sumar o quitar fondos (pedidos de la app al robot) ─────────
+
+ACCIONES_PEDIDO = {"seguir": "Seguir", "dejar": "Dejar de seguir", "editar_tematica": "Editar descripción y temática"}
+ESTADOS_PEDIDO = {"pendiente": "Pendiente", "listo": "Listo", "problema": "Problema"}
+MAX_DESCRIPCION = 500          # mismos topes que la política de la base (base_de_datos/usuario_pedidos.sql)
+MAX_IDEA = 2000
+MAX_DIGITOS_ID_FICHA = 9
+
+
+def _sin_tildes(texto):
+    return "".join(c for c in unicodedata.normalize("NFD", str(texto or "").lower()) if unicodedata.category(c) != "Mn")
+
+
+def filtrar_catalogo(df, texto="", moneda="Todas", tipos=(), rubros=(), situacion="Todos"):
+    """Buscador del catálogo completo. `texto`: todas las palabras tienen que estar en el nombre del fondo o de su gerente
+    (sin importar mayúsculas ni tildes). `moneda`: 'Todas', 'Pesos' o 'Dólares'. `situacion`: 'Todos', 'Seguidos' o
+    'No seguidos'. Sin tipos o rubros elegidos no se filtra por ellos."""
+    out = filtrar_moneda(df, moneda)
+    if tipos:
+        out = out[out["tipo_fondo"].isin(tipos)]
+    if rubros:
+        out = out[out["rubro"].isin(rubros)]
+    if situacion == "Seguidos":
+        out = out[out["seguido"]]
+    elif situacion == "No seguidos":
+        out = out[~out["seguido"]]
+    palabras = _sin_tildes(texto).split()
+    if palabras:
+        pajar = (out["nombre"].map(_sin_tildes) + " " + out["gerente"].map(_sin_tildes))
+        for p in palabras:
+            out = out[pajar.loc[out.index].str.contains(p, regex=False)]
+    return out.sort_values("nombre", kind="stable")
+
+
+def validar_pedido(accion, descripcion=None, idea=None, id_ficha=None):
+    """Limpia y controla lo que se escribió en la pantalla. Devuelve (datos, error): `datos` = {'accion', 'descripcion',
+    'idea', 'id_ficha'} (los vacíos quedan en None) y `error` = texto para mostrar, o None si está todo bien."""
+    if accion not in ACCIONES_PEDIDO:
+        return None, "Acción desconocida."
+    texto = lambda x: x.strip() if isinstance(x, str) else ""      # noqa: E731  (un dato vacío de la base llega como None o NaN)
+    desc, idea = texto(descripcion) or None, texto(idea) or None
+    ficha = (str(id_ficha).strip().replace(".", "") if id_ficha is not None and id_ficha == id_ficha else "") or None
+    if accion == "dejar":
+        return {"accion": accion, "descripcion": None, "idea": None, "id_ficha": None}, None
+    if desc and len(desc) > MAX_DESCRIPCION:
+        return None, f"La descripción breve tiene {len(desc)} caracteres: el máximo es {MAX_DESCRIPCION}."
+    if idea and len(idea) > MAX_IDEA:
+        return None, f"La idea y temática tiene {len(idea)} caracteres: el máximo es {MAX_IDEA}."
+    if ficha is not None:
+        if not ficha.isdigit() or int(ficha) == 0 or len(ficha) > MAX_DIGITOS_ID_FICHA:
+            return None, "El ID de la ficha CNV son solo números (por ejemplo 63491); está en la dirección de la ficha del fondo en la web de la CNV."
+        ficha = int(ficha)
+    if accion == "editar_tematica":
+        ficha = None
+    return {"accion": accion, "descripcion": desc, "idea": idea, "id_ficha": ficha}, None
+
+
+def motivo_pide_id(motivo):
+    """¿El problema se arregla cargando el ID de la ficha CNV? (no se encontró la ficha, no sirve o es de otra gerente)"""
+    return "ficha cnv" in str(motivo or "").lower()
+
+
+def preparar_pedidos(df):
+    """Lista de pedidos para mostrar: agrega 'accion_texto', 'estado_texto' (con "reintentado" si después se pidió de
+    nuevo lo mismo) y 'reintentable' (un 'seguir' con problema por falta de ID que nadie volvió a pedir).
+    Ordenados del más nuevo al más viejo."""
+    df = df.sort_values("id", ascending=False).copy()
+    df["accion_texto"] = df["accion"].map(ACCIONES_PEDIDO).fillna(df["accion"])
+    repetido = pd.Series([bool(((df["codigo_cnv"] == p.codigo_cnv) & (df["accion"] == p.accion) & (df["id"] > p.id)).any())
+                          for p in df.itertuples()], index=df.index, dtype=bool)
+    problema = df["estado"] == "problema"
+    df["reintentable"] = (df["accion"] == "seguir") & problema & df["motivo"].map(motivo_pide_id) & ~repetido
+    df["estado_texto"] = df["estado"].map(ESTADOS_PEDIDO).fillna(df["estado"])
+    df.loc[problema & repetido, "estado_texto"] = "Problema (se volvió a pedir)"
+    return df

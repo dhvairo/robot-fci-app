@@ -21,6 +21,27 @@ def cargar(ruta=RUTA):
     return json.loads(Path(ruta).read_text(encoding="utf-8"))["corridas"]
 
 
+def cargar_procesador(ruta=RUTA):
+    """Las corridas del procesador de pedidos de fondos (pantalla "Sumar o quitar fondos")."""
+    return json.loads(Path(ruta).read_text(encoding="utf-8")).get("procesador_pedidos", [])
+
+
+def proxima_del_procesador(corridas, ahora):
+    """Próximo momento (hora Argentina) en que corre el procesador de pedidos, o None si no hay corridas programadas."""
+    return min((proxima(c, ahora) for c in corridas), default=None)
+
+
+def texto_procesador(corridas):
+    """'todos los días a las 08:00, 11:00, 14:00, 17:00 y 20:00' (o '—' si no hay corridas)."""
+    if not corridas:
+        return "—"
+    horas = sorted(c["hora_ar"] for c in corridas)
+    if all(c["dias_ar"] == corridas[0]["dias_ar"] for c in corridas):
+        lista = horas[0] if len(horas) == 1 else ", ".join(horas[:-1]) + " y " + horas[-1]
+        return f"{texto_dias(corridas[0]['dias_ar'])} a las {lista}"
+    return "; ".join(texto_horario(c) for c in corridas)
+
+
 def _hora(c):
     h, m = c["hora_ar"].split(":")
     return int(h), int(m)

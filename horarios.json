@@ -41,5 +41,82 @@
         5
       ]
     }
+  ],
+  "procesador_pedidos": [
+    {
+      "flujo": "procesar_pedidos.yml",
+      "nombre": "Procesar pedidos de fondos",
+      "cron_utc": "0 11,14,17,20,23 * * *",
+      "hora_ar": "08:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "flujo": "procesar_pedidos.yml",
+      "nombre": "Procesar pedidos de fondos",
+      "cron_utc": "0 11,14,17,20,23 * * *",
+      "hora_ar": "11:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "flujo": "procesar_pedidos.yml",
+      "nombre": "Procesar pedidos de fondos",
+      "cron_utc": "0 11,14,17,20,23 * * *",
+      "hora_ar": "14:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "flujo": "procesar_pedidos.yml",
+      "nombre": "Procesar pedidos de fondos",
+      "cron_utc": "0 11,14,17,20,23 * * *",
+      "hora_ar": "17:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "flujo": "procesar_pedidos.yml",
+      "nombre": "Procesar pedidos de fondos",
+      "cron_utc": "0 11,14,17,20,23 * * *",
+      "hora_ar": "20:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    }
   ]
 }

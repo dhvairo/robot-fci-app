@@ -22,9 +22,7 @@ def _url():
     return v or os.environ.get("APP_DB_URL")
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def consultar(sql, params=None):
-    """Corre una consulta (solo lectura) y devuelve un DataFrame."""
+def _ejecutar(sql, params=None):
     url = _url()
     if not url:
         st.error("Falta APP_DB_URL (archivo .env o secretos de la app).")
@@ -37,6 +35,12 @@ def consultar(sql, params=None):
         if df[c].map(lambda x: isinstance(x, Decimal)).any():
             df[c] = df[c].astype(float)
     return df
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def consultar(sql, params=None):
+    """Corre una consulta (solo lectura) y devuelve un DataFrame."""
+    return _ejecutar(sql, params)
 
 
 def fondos_seguidos():
@@ -191,3 +195,52 @@ def filas_a_revisar(dias=120):
         "join fondos f using (codigo_cnv) "
         "where r.revisar and r.fecha >= (select max(fecha) from rendimientos) - %s "
         "order by r.fecha desc, f.nombre, c.nombre", (dias,))
+
+
+# ───────── Sumar o quitar fondos ─────────
+
+class ErrorPedido(Exception):
+    """No se pudo anotar el pedido (el texto se muestra tal cual en la pantalla)."""
+
+
+def _url_pedidos():
+    try:
+        v = st.secrets["PEDIDOS_DB_URL"]
+    except Exception:
+        v = None
+    return v or os.environ.get("PEDIDOS_DB_URL")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def catalogo_fondos():
+    """Todos los fondos del catálogo (seguidos o no) para el buscador de "Sumar o quitar fondos"."""
+    return _ejecutar(
+        "select f.codigo_cnv, f.nombre, f.moneda, f.seguido, f.id_ficha_web, f.tipo_fondo, f.rubro, "
+        "f.descripcion_breve, f.tematica, f.tematica_provisoria, g.nombre as gerente "
+        "from fondos f left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
+        "order by f.nombre")
+
+
+def pedidos_recientes(limite=60):
+    """Los últimos pedidos con su estado. Sin caché: tiene que verse enseguida lo que se acaba de pedir."""
+    return _ejecutar(
+        "select p.id, p.codigo_cnv, f.nombre as fondo, p.accion, p.descripcion_breve, p.idea_tematica, "
+        "p.id_ficha_cnv, p.estado, p.motivo, p.pedido_en, p.procesado_en from pedidos_fondos p "
+        "left join fondos f using (codigo_cnv) order by p.id desc limit %s", (limite,))
+
+
+def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None):
+    """Anota un pedido en `pedidos_fondos` (lo único que puede escribir la app, con el usuario de permiso mínimo).
+    Devuelve el número del pedido."""
+    url = _url_pedidos()
+    if not url:
+        raise ErrorPedido("Falta PEDIDOS_DB_URL (archivo .env o secretos de la app): no se puede anotar el pedido.")
+    try:
+        with psycopg.connect(url, connect_timeout=20) as conn:
+            fila = conn.execute(
+                "insert into pedidos_fondos (codigo_cnv, accion, descripcion_breve, idea_tematica, id_ficha_cnv) "
+                "values (%s, %s, %s, %s, %s) returning id",
+                (int(codigo_cnv), accion, descripcion, idea, id_ficha)).fetchone()
+    except psycopg.Error as e:
+        raise ErrorPedido("No se pudo anotar el pedido: " + " ".join(str(e).replace(url, "***").split())[:160])
+    return fila[0]

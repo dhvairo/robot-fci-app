@@ -16,7 +16,7 @@ st.set_page_config(page_title="Resumen masivo de fondos", page_icon="📈", layo
 acceso.requerir()
 st.title("Resumen masivo de fondos")
 st.caption("Composición de la última cartera de los fondos que sigue el robot (fuente: CNV). "
-           "Para sumar un fondo, se agrega a config/fondos_seguidos.csv y su cartera entra en la próxima corrida.")
+           "Los fondos que se siguen se suman o se quitan con pedidos (la pantalla para pedirlos está en preparación).")
 
 todos = datos.fondos_ficha()
 if todos.empty:

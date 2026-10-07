@@ -19,7 +19,7 @@ import horarios  # noqa: E402
 st.set_page_config(page_title="Robot FCI", page_icon="📈", layout="wide")
 acceso.requerir()
 st.title("Robot FCI")
-st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura.")
+st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura: lo único que la app puede hacer es anotar pedidos de seguir o dejar de seguir fondos.")
 
 r = datos.resumen_base()
 
@@ -81,6 +81,9 @@ st.markdown("""
 - **Comparador:** compara clases de distintos fondos en un período.
 - **Buscador de instrumentos:** en qué fondos seguidos está un instrumento y con qué peso.
 - **Filas a revisar:** rendimientos que difieren de los de la CAFCI.
+- **Resumen masivo de fondos:** tabla e informe (pantalla y PDF) con la composición de los fondos seguidos que elijas.
+- **Gestión y eficiencia:** costos, patrimonio y rendimiento de todas las clases, con un ranking informativo.
+- **Sumar o quitar fondos:** pedirle al robot que siga (o deje de seguir) un fondo del catálogo, y ver el estado de los pedidos.
 """)
 st.caption("Los rendimientos no consideran distribución de utilidades. Esta herramienta informa; "
            "no es una recomendación de inversión.")
