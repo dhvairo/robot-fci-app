@@ -1,5 +1,5 @@
 """Acceso de usuarios, sesiones y administración; Auth solo desde el servidor."""
-import hmac
+import re
 import json
 import os
 import secrets
@@ -20,10 +20,6 @@ def secreto(nombre):
     except Exception:
         valor = None
     return valor or os.environ.get(nombre)
-
-
-def _clave():
-    return secreto("APP_PASSWORD")
 
 
 def _api(metodo, ruta, cuerpo=None, token=None, admin=False):
@@ -111,9 +107,37 @@ def _admin():
     return persona
 
 
-def crear_usuario(correo, admin=False, inicial=False):
+def validar_correo(correo, confirmacion):
+    correo = correo.strip()
+    if correo.casefold() != confirmacion.strip().casefold():
+        raise ErrorAcceso("Los correos no coinciden.")
+    partes = correo.rsplit("@", 1)
+    if len(partes) != 2 or len(correo) > 254:
+        raise ErrorAcceso("Ingresá un correo válido.")
+    local, dominio = partes
+    etiquetas = dominio.split(".")
+    if (not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}", local)
+            or local.startswith(".") or local.endswith(".") or ".." in local
+            or len(etiquetas) < 2 or not re.fullmatch(r"[A-Za-z]{2,63}", etiquetas[-1])
+            or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", e) for e in etiquetas)):
+        raise ErrorAcceso("Ingresá un correo válido.")
+    return local + "@" + dominio.lower()
+
+
+def aviso_dominio(correo):
+    dominio = correo.rsplit("@", 1)[-1].lower()
+    errores = {"gmal.com": "gmail.com", "gmial.com": "gmail.com", "gamil.com": "gmail.com",
+               "gnail.com": "gmail.com", "gmail.con": "gmail.com", "gmail.co": "gmail.com",
+               "hotmial.com": "hotmail.com", "hotmal.com": "hotmail.com",
+               "hotamil.com": "hotmail.com", "outlok.com": "outlook.com", "yaho.com": "yahoo.com"}
+    sugerido = errores.get(dominio)
+    return f"El dominio {dominio} parece mal escrito. ¿Quisiste poner {sugerido}? Revisalo antes de confirmar." if sugerido else ""
+
+
+def crear_usuario(correo, confirmacion=None, admin=False, inicial=False):
     # inicial es exclusivamente para el comando local del operador del servidor.
     organizacion = "propia" if inicial else _admin()["organizacion"]
+    correo = validar_correo(correo, correo if inicial else (confirmacion or ""))
     temporal = secrets.token_urlsafe(24)
     _api("POST", "admin/users", {"email": correo.strip(), "password": temporal, "email_confirm": True,
                                  "app_metadata": {"organizacion": organizacion, "rol": "admin" if admin else "asesor",
@@ -134,18 +158,18 @@ def listar_usuarios():
         pagina += 1
 
 
-def restablecer_clave(identificador):
+def restablecer_clave(identificador, clave, confirmacion):
     persona = _admin()
+    if len(clave) < 12 or clave != confirmacion:
+        raise ErrorAcceso("Usá al menos 12 caracteres y repetí la misma clave.")
     identificador = str(UUID(identificador))
     destino = _api("GET", "admin/users/" + identificador, admin=True)
     meta = destino.get("app_metadata", {})
     if meta.get("organizacion") != persona["organizacion"]:
         raise ErrorAcceso("El usuario no pertenece a tu organización.")
-    temporal = secrets.token_urlsafe(24)
     _api("PUT", "admin/users/" + identificador,
-         {"password": temporal, "app_metadata": {**meta, "cambio_obligatorio": True,
+         {"password": clave, "app_metadata": {**meta, "cambio_obligatorio": True,
                                                    "version_clave": str(uuid4())}}, admin=True)
-    return temporal
 
 
 def cambiar_clave(clave, confirmacion):
@@ -163,23 +187,48 @@ def cambiar_clave(clave, confirmacion):
 
 
 def _pantalla_usuarios():
+    _admin()
     with st.sidebar.expander("Usuarios"):
         try:
             with st.form("crear_usuario", clear_on_submit=True):
                 correo = st.text_input("Correo del nuevo usuario")
+                repetir = st.text_input("Repetí el correo")
                 admin = st.checkbox("Administrador de la organización")
-                crear = st.form_submit_button("Crear usuario")
-            if crear:
-                st.caption("Clave temporal: pasala a la persona. Se muestra una sola vez.")
-                st.code(crear_usuario(correo, admin), language=None)
+                revisar = st.form_submit_button("Revisar alta")
+            if revisar:
+                st.session_state.pop("alta_pendiente", None)
+                correo = validar_correo(correo, repetir)
+                st.session_state["alta_pendiente"] = (correo, admin)
+            pendiente = st.session_state.get("alta_pendiente")
+            if pendiente:
+                correo, admin = pendiente
+                st.write("Correo final: " + correo)
+                st.write("Rol: " + ("Administrador" if admin else "Asesor"))
+                aviso = aviso_dominio(correo)
+                if aviso:
+                    st.warning(aviso)
+                if st.button("Confirmar alta"):
+                    st.session_state.pop("alta_pendiente", None)
+                    temporal = crear_usuario(correo, correo, admin=admin)
+                    st.caption("Clave temporal: pasala a la persona. Se muestra una sola vez.")
+                    st.code(temporal, language=None)
+                if st.button("Cancelar alta"):
+                    st.session_state.pop("alta_pendiente", None)
+                    st.rerun()
             if st.button("Ver usuarios"):
                 st.session_state["mostrar_usuarios"] = True
             if st.session_state.get("mostrar_usuarios"):
-                for persona in listar_usuarios():
-                    st.write(persona["correo"] + " · " + persona["rol"])
-                    if st.button("Restablecer clave", key="restablecer_" + persona["id"]):
-                        st.caption("Clave temporal: se muestra una sola vez.")
-                        st.code(restablecer_clave(persona["id"]), language=None)
+                personas = listar_usuarios()
+                if personas:
+                    opciones = {p["id"]: p["correo"] + " · " + p["rol"] for p in personas}
+                    with st.form("reasignar_clave", clear_on_submit=True):
+                        destino = st.selectbox("Usuario", list(opciones), format_func=opciones.get)
+                        clave = st.text_input("Nueva clave del usuario (12 caracteres o más)", type="password")
+                        repetir = st.text_input("Repetí la clave del usuario", type="password")
+                        reasignar = st.form_submit_button("Reasignar clave")
+                    if reasignar:
+                        restablecer_clave(destino, clave, repetir)
+                        st.success("Clave reasignada. El usuario deberá cambiarla al ingresar.")
         except ErrorAcceso as error:
             st.error(str(error))
 
@@ -214,6 +263,10 @@ def preferencias_inicio():
 def requerir():
     """Único control de todas las pantallas; exige cambiar la clave antes de mostrar datos."""
     import marca
+    if (not str(secreto("SUPABASE_URL") or "").startswith("https://")
+            or not secreto("SUPABASE_ANON_KEY") or not secreto("SUPABASE_SERVICE_KEY")):
+        st.error("Falta configurar el acceso de usuarios: SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_KEY. Consultá al administrador.")
+        st.stop()
     if st.session_state.get("auth"):
         try:
             persona = _validar_sesion()
@@ -249,44 +302,18 @@ def requerir():
         if persona["rol"] == "admin":
             _pantalla_usuarios()
         return
-    if st.session_state.get("acceso_ok"):
-        if _clave():
-            st.sidebar.warning("Acceso con clave compartida de respaldo.")
-            if st.sidebar.button("Cerrar sesión"):
-                cerrar_sesion()
-                st.rerun()
-            return
-        cerrar_sesion()
-    # Las pruebas de pantallas sin red usan datos simulados; en producción se falla cerrado.
-    if os.environ.get("ROBOT_FCI_SIN_RED") == "1" and not _clave() and not secreto("SUPABASE_URL") and not secreto("SUPABASE_ANON_KEY"):
-        return
     st.title(marca.nombre())
     st.caption("Acceso restringido.")
-    if secreto("SUPABASE_ANON_KEY"):
-        with st.form("ingreso_usuario", clear_on_submit=True):
-            correo = st.text_input("Correo")
-            clave = st.text_input("Clave", type="password")
-            enviar = st.form_submit_button("Entrar")
-        if enviar:
-            try:
-                ingresar(correo, clave)
-                st.rerun()
-            except ErrorAcceso:
-                st.error("No se pudo ingresar. Revisá el correo y la clave.")
-    else:
-        st.info("El ingreso por usuario espera la configuración del servidor.")
+    with st.form("ingreso_usuario", clear_on_submit=True):
+        correo = st.text_input("Correo")
+        clave = st.text_input("Clave", type="password")
+        enviar = st.form_submit_button("Entrar")
+    if enviar:
+        try:
+            ingresar(correo, clave)
+            st.rerun()
+        except ErrorAcceso:
+            st.error("No se pudo ingresar. Revisá el correo y la clave.")
     with st.expander("Olvidé mi clave"):
         st.write("Pedile a tu administrador que restablezca tu clave.")
-    compartida = _clave()
-    if compartida:
-        st.warning("La clave compartida sigue disponible como respaldo durante la transición.")
-        with st.form("acceso", clear_on_submit=True):
-            intento = st.text_input("Clave de acceso compartida", type="password")
-            enviar = st.form_submit_button("Entrar con respaldo")
-        if enviar:
-            if hmac.compare_digest(intento.encode(), str(compartida).encode()):
-                st.session_state["acceso_ok"] = True
-                st.rerun()
-            time.sleep(2)
-            st.error("Clave incorrecta.")
     st.stop()
