@@ -11,14 +11,16 @@ import recarga
 recarga.al_dia()          # si la app se publicó mientras estaba abierta, se leen los módulos nuevos (sin "Reboot")
 
 import acceso  # noqa: E402
+import marca  # noqa: E402
 import datos  # noqa: E402
 import estado  # noqa: E402
 import formato  # noqa: E402
 import horarios  # noqa: E402
 
-st.set_page_config(page_title="Robot FCI", page_icon="📈", layout="wide")
+st.set_page_config(page_title=marca.nombre(), page_icon="📈", layout="wide")
 acceso.requerir()
-st.title("Robot FCI")
+st.title(marca.nombre())
+acceso.preferencias_inicio()
 st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura: lo único que la app puede hacer es anotar pedidos de seguir o dejar de seguir fondos.")
 
 r = datos.resumen_base()

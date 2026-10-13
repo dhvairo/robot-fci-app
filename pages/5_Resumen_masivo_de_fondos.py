@@ -11,6 +11,7 @@ import calculos  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
 import informe  # noqa: E402
+import marca  # noqa: E402
 
 st.set_page_config(page_title="Resumen masivo de fondos", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -68,7 +69,7 @@ for sec in secs:
     fondos = sec["fondos"]
     fig = go.Figure(go.Pie(
         labels=[f["nombre"] for f in fondos], values=[1] * len(fondos), sort=False, direction="clockwise",
-        marker=dict(colors=[informe.PALETA[i % len(informe.PALETA)] for i in range(len(fondos))],
+        marker=dict(colors=[marca.paleta()[i % len(marca.paleta())] for i in range(len(fondos))],
                     line=dict(color="white", width=2)),
         text=[f["etiqueta"].replace("\n", "<br>") for f in fondos], textinfo="text", textposition="outside",
         hoverinfo="text", showlegend=False))

@@ -26,6 +26,7 @@ if todos.empty:
     st.stop()
 c_mon, c_rub, c_fon = st.columns(3)
 moneda_op = c_mon.radio("Moneda", calculos.OPCIONES_MONEDA, horizontal=True,
+                        index=acceso.indice_moneda(calculos.OPCIONES_MONEDA),
                         help="Dólares incluye USD y USD billete.")
 de_moneda = calculos.filtrar_moneda(todos, moneda_op)
 if de_moneda.empty:

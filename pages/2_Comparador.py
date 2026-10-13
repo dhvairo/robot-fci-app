@@ -23,6 +23,7 @@ if cl.empty:
 cl["etiqueta"] = cl.apply(lambda r: f"{r['fondo']} — {r['clase'].split(' - ')[-1]}", axis=1)
 
 mon = st.radio("Moneda", ["Todos", *calculos.OPCIONES_MONEDA], horizontal=True,
+               index=acceso.indice_moneda(["Todos", *calculos.OPCIONES_MONEDA]),
                help="Conviene comparar fondos de la misma moneda. Dólares incluye USD y USD billete.")
 base = calculos.filtrar_moneda(cl, mon)
 if base.empty:

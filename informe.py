@@ -9,17 +9,14 @@ from math import cos, radians, sin
 from xml.sax.saxutils import escape
 
 import formato
+import marca
 
 TITULO_BASE = "Fondos Comunes de Inversión en"
 FUENTE = "Fuente: Comisión Nacional de Valores (CNV), Composición Semanal de Cartera."
 ACLARACION = "Porcentajes sobre el patrimonio neto de cada fondo. Sub-soberano = provincias; CER = ajuste por inflación."
-DESCARGO = ("Información de carácter exclusivamente informativo, elaborada a partir de datos públicos de la CNV. No "
-            "constituye recomendación, asesoramiento ni oferta de inversión. Las carteras de los fondos cambian en forma "
-            "permanente y los rendimientos pasados no garantizan rendimientos futuros. Antes de invertir, consulte el "
-            "reglamento de gestión de cada fondo.")
-# Colores de las porciones (los del informe modelo; si hay más fondos, se repiten).
-PALETA = ("#1F3864", "#2E75B6", "#5B9BD5", "#9DC3E6", "#C9A227", "#808080", "#6AA84F", "#E06666", "#8E7CC3",
-          "#F6B26B", "#76A5AF", "#B4A7D6")
+# Alias históricos para consumidores existentes; pantalla y PDF usan la marca actual.
+DESCARGO = marca.DESCARGO
+PALETA = (marca.PROPIA["color_principal"], marca.PROPIA["color_secundario"], *marca.PALETA_BASE)
 MONEDAS = (("pesos", "pesos", ("ARS",)), ("dolares", "dólares", ("USD", "USB")))     # (clave, texto, códigos)
 
 
@@ -62,7 +59,7 @@ def secciones(tabla):
                 "etiqueta": "\n".join([f["Fondo"]] + [f"{i}) {r}" for i, r in enumerate(rubros, start=1)])})
         out.append({"clave": clave, "titulo": f"{TITULO_BASE} {texto}", "subtitulo": sub, "aclaracion": ACLARACION,
                     "titulo_torta": f"Fondos en {texto} — dos principales rubros por fondo", "fondos": fondos,
-                    "descargo": DESCARGO})
+                    "descargo": marca.actual()["texto_legal"]})
     return out
 
 
@@ -86,12 +83,13 @@ def _dibujar_torta(sec, ancho, colors, shapes):
     d = shapes.Drawing(ancho, alto)
     cx, cy, radio = ancho / 2, alto / 2, 78
     d.add(shapes.String(ancho / 2, alto - 12, sec["titulo_torta"], fontName="Helvetica-Bold", fontSize=10.5,
-                        textAnchor="middle", fillColor=colors.HexColor("#1F3864")))
+                        textAnchor="middle", fillColor=colors.HexColor(marca.actual()["color_principal"])))
     paso = 360 / n
     rotulos = {"izq": [], "der": []}
     for i, f in enumerate(fondos):
         a0, a1 = 90 - (i + 1) * paso, 90 - i * paso            # sentido de las agujas, arrancando arriba (como el modelo)
-        d.add(shapes.Wedge(cx, cy, radio, a0, a1, fillColor=colors.HexColor(PALETA[i % len(PALETA)]),
+        paleta = marca.paleta()
+        d.add(shapes.Wedge(cx, cy, radio, a0, a1, fillColor=colors.HexColor(paleta[i % len(paleta)]),
                            strokeColor=colors.white, strokeWidth=1.2))
         medio = radians((a0 + a1) / 2)
         lado = "der" if cos(medio) >= 0 else "izq"
@@ -127,7 +125,8 @@ def pdf(secs, titulo_documento=None):
     from reportlab.lib.units import cm
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    azul = colors.HexColor("#1F3864")
+    config = marca.actual()
+    azul = colors.HexColor(config["color_principal"])
     s_titulo = ParagraphStyle("t", fontName="Helvetica-Bold", fontSize=19, leading=23, textColor=azul, spaceAfter=3)
     s_sub = ParagraphStyle("s", fontName="Helvetica", fontSize=8.5, leading=11, textColor=colors.HexColor("#555555"))
     s_celda = ParagraphStyle("c", fontName="Helvetica", fontSize=8, leading=10, alignment=TA_LEFT)
@@ -141,15 +140,28 @@ def pdf(secs, titulo_documento=None):
 
     def pie(canvas, doc):
         canvas.saveState()
-        p = Paragraph(escape(DESCARGO), s_descargo)
+        p = Paragraph(escape(config["texto_legal"]), s_descargo)
         _, alto_p = p.wrap(ancho, 3 * cm)
         p.drawOn(canvas, margen, 1.0 * cm)
+        if config["nombre"] != marca.PROPIA["nombre"]:
+            canvas.setFillColor(azul)
+            canvas.setFont("Helvetica", 7)
+            canvas.drawString(margen, 0.5 * cm, config["nombre"])
         canvas.restoreState()
 
     historia = []
+    logo = marca.logo_bytes()
     for i, sec in enumerate(secs):
         if i:
             historia.append(PageBreak())
+        if logo:
+            from reportlab.platypus import Image
+            imagen = Image(BytesIO(logo))
+            factor = min(100 / imagen.imageWidth, 35 / imagen.imageHeight)
+            imagen.drawWidth = imagen.imageWidth * factor
+            imagen.drawHeight = imagen.imageHeight * factor
+            imagen.hAlign = "LEFT"
+            historia.extend([imagen, Spacer(1, 4)])
         historia += [Paragraph(escape(sec["titulo"]), s_titulo), Paragraph(escape(sec["subtitulo"]), s_sub),
                      Paragraph(escape(sec["aclaracion"]), s_sub), Spacer(1, 6),
                      _dibujar_torta(sec, ancho, colors, shapes), Spacer(1, 8)]
@@ -171,6 +183,6 @@ def pdf(secs, titulo_documento=None):
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=margen, rightMargin=margen, topMargin=1.5 * cm,
                             bottomMargin=2.6 * cm, title=titulo_documento or " / ".join(s["titulo"] for s in secs),
-                            author="Robot FCI")
+                            author=config["nombre"])
     doc.build(historia, onFirstPage=pie, onLaterPages=pie)
     return buf.getvalue()

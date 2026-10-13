@@ -37,6 +37,48 @@ def _ejecutar(sql, params=None):
     return df
 
 
+class ErrorPreferencias(Exception):
+    """Fallo seguro de configuración personal; no expone la conexión."""
+
+
+def _personal(persona, sql, params=()):
+    """Contexto de RLS local a la transacción, obtenido de Auth por acceso.py.
+
+    Sin caché global: jamás mezcla organizaciones ni dueños.
+    """
+    try:
+        with psycopg.connect(_url(), connect_timeout=20) as conn:
+            conn.execute("select set_config('app.organizacion', %s, true), "
+                         "set_config('app.dueno', %s, true)", (persona["organizacion"], persona["id"]))
+            return conn.execute(sql, params).fetchall()
+    except Exception:
+        raise ErrorPreferencias("No se pudo acceder a la configuración personal.") from None
+
+
+def organizacion(persona):
+    columnas = ("id", "nombre", "logo", "color_principal", "color_secundario", "texto_legal")
+    filas = _personal(persona, "select id,nombre,logo,color_principal,color_secundario,texto_legal "
+                      "from public.organizaciones where id=%s", (persona["organizacion"],))
+    if not filas:
+        raise ErrorPreferencias("Organización no configurada.")
+    return dict(zip(columnas, filas[0]))
+
+
+def leer_preferencia(persona, clave):
+    filas = _personal(persona, "select valor from public.preferencias "
+                      "where organizacion=%s and dueno=%s and clave=%s",
+                      (persona["organizacion"], persona["id"], clave))
+    return filas[0][0] if filas else None
+
+
+def guardar_preferencia(persona, clave, valor):
+    from psycopg.types.json import Jsonb
+    _personal(persona, "insert into public.preferencias(organizacion,dueno,clave,valor) "
+              "values (%s,%s,%s,%s) on conflict (organizacion,dueno,clave) "
+              "do update set valor=excluded.valor, actualizada=now() returning clave",
+              (persona["organizacion"], persona["id"], clave, Jsonb(valor)))
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def consultar(sql, params=None):
     """Corre una consulta (solo lectura) y devuelve un DataFrame."""
