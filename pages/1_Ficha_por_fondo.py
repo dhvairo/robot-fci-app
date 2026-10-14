@@ -12,6 +12,7 @@ import datos  # noqa: E402
 import formato  # noqa: E402
 import filtros  # noqa: E402
 import informe  # noqa: E402
+import consulta_puntual  # noqa: E402
 import pandas as pd
 
 # Colores de la torta; cada uno tiene su cuadradito de color para el botón del mismo rubro.
@@ -37,12 +38,34 @@ fondo = filtrados[filtrados["codigo_cnv"] == codigo].iloc[0]
 nombre = fondo["nombre"]
 codigo = int(fondo["codigo_cnv"])
 seguido = bool(fondo["seguido"])
+puntual = None
+if not seguido:
+    cache = st.session_state.setdefault("consulta_puntual", {})
+    puntual = cache.get("fondos", {}).get(codigo)
+    if st.button("Ver ahora sin seguir", disabled=puntual is not None):
+        with st.spinner("Cargando…"):
+            puntual = consulta_puntual.cargar(fondo.to_dict(), cache,
+                                             consulta_puntual.token_configurado(st.secrets))
+    if puntual is not None:
+        st.info(consulta_puntual.LEYENDA)
+        st.caption(f"Carga inicial: {formato.numero(puntual['segundos'])} segundos · disponible solo en esta sesión.")
+        for aviso in puntual["avisos"]:
+            st.warning(aviso)
+        fondo = fondo.copy()
+        for campo, valor in puntual["cabecera"].items():
+            fondo[campo] = valor
+        fondo["consulta_puntual"] = True
+    if st.button("Seguir este fondo"):
+        st.session_state["seguir_desde_ficha"] = codigo
+        st.switch_page("pages/7_Sumar_o_quitar_fondos.py")
 tabla_pdf = pd.DataFrame()
 serie_pdf = pd.DataFrame()
 rubros_pdf = pd.DataFrame()
 top_pdf = pd.DataFrame()
 costos_pdf = pd.DataFrame()
 notas_pdf = []
+if puntual is not None:
+    notas_pdf = [consulta_puntual.LEYENDA, *puntual["avisos"]]
 
 st.subheader(nombre)
 cab = calculos.cabecera_fondo(fondo.to_dict())
@@ -69,6 +92,8 @@ else:
         if seguido:
             rend = datos.rendimientos_ultimos(sel["codigo_cafci"])
             tabla = sel.merge(rend, on="codigo_cafci", how="left")
+        elif puntual is not None and not puntual["rendimientos"].empty:
+            tabla = sel.merge(puntual["rendimientos"], on="codigo_cafci", how="left")
         else:
             tabla = datos.foto_de_fondo(codigo)
             tabla = tabla[tabla["codigo_cafci"].isin(sel["codigo_cafci"])].copy()
@@ -86,21 +111,23 @@ else:
                                    numeros={"Cuotaparte": 4, **{c: 2 for c in cols if c.endswith("%")}})
         st.dataframe(tabla_pdf,
                      hide_index=True, width="stretch")
-        nota = ('Rendimientos calculados por el robot sobre la cuotaparte; "—" = historia insuficiente '
-                '(o clase sin patrimonio) para ese período. No consideran distribución de utilidades.' if seguido else
+        calculados = seguido or (puntual is not None and not puntual["rendimientos"].empty)
+        nota = ('Rendimientos calculados con las reglas del robot sobre la cuotaparte; "—" = historia insuficiente '
+                '(o clase sin patrimonio) para ese período. No consideran distribución de utilidades.' if calculados else
                 'Rendimientos de la CAFCI: mes, año y 12 meses. "—" = dato no disponible. '
                 'No consideran distribución de utilidades.')
         st.caption(nota)
         notas_pdf.append(nota)
         if not seguido:
-            costos_pdf = calculos.costos_ficha(tabla)
+            costos_pdf = calculos.costos_ficha(datos.foto_de_fondo(codigo))
             st.dataframe(costos_pdf, hide_index=True, width="stretch")
-        if revisar:
+        if revisar and seguido:
             st.warning("Diario, mes, año o 12 meses calculados distintos de los de la CAFCI en: " + ", ".join(revisar)
                        + ". Ver la pantalla \"Filas a revisar\".")
 
-        if seguido:
-            ser = datos.serie(sel["codigo_cafci"]).merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
+        if seguido or puntual is not None:
+            historia = datos.serie(sel["codigo_cafci"]) if seguido else puntual["serie"]
+            ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
             if ser["fecha"].nunique() < 2:
                 st.info("Todavía hay una sola fecha de cuotaparte: el gráfico aparece cuando se cargue la historia.")
             else:
@@ -116,7 +143,9 @@ else:
 st.subheader("Cartera semanal")
 enc = datos.cartera_encabezado(codigo) if seguido else pd.DataFrame()
 cart = datos.cartera(codigo) if seguido else pd.DataFrame()
-if not seguido:
+if puntual is not None:
+    enc, cart = puntual["encabezado"], puntual["cartera"]
+if not seguido and puntual is None:
     st.info(filtros.AVISO_NO_SEGUIDO)
 elif enc.empty or cart.empty:
     st.info("Todavía no hay cartera cargada para este fondo.")

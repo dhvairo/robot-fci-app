@@ -1,0 +1,28 @@
+﻿orden;rubro_cnv;patron;categoria_resumen;categoria_detallada;moneda;indexacion;nota
+10;disponibilidades;;Disponibilidades;Disponibilidades {mon};fondo;;Moneda del fondo (la ficha no abre las disponibilidades)
+11;otros activos;;Otros activos;Otros activos;fondo;;
+12;pasivos;;Pasivos;Pasivos;fondo;;Se muestra aparte de los 13 rubros para que la cartera sume 100
+13;participaciones accionarias;;Acciones;Acciones {pais};;;El pais sale del rubro de la CNV
+20;;^caucion;Caución;Caución {mon};auto;;
+21;;^pzo fi;Plazo fijo;Plazo fijo {mon};auto;;
+22;;^pagare;Pagaré;Pagaré {mon};auto;;
+23;;^cheque;Cheques;Cheques ARS;ARS;;
+24;;^ff vicentin|^ff .*(u\$s|usd|dolar);Fideicomisos financieros;FF USD;USD;;Vicentin Exportaciones VIII está emitido en dólares (verificado en el prospecto)
+25;;^ff (amfays|centrocard|confibono|consubond|cuotas cencosud|fiducar|megabono|mercado credito|payway|pedidos ya|provincia leasing|tarj fertil);Fideicomisos financieros;FF ARS;ARS;;Fideicomisos locales de crédito y cobranzas en pesos. Un emisor nuevo queda sin clasificar hasta agregarlo acá
+26;;^fci (schroder liquidez - |bm smart money market|balanz capital money market|wise capital money markets|allaria ahorro - |mercadolibre cerrado);FCI;FCI ARS;ARS;;Fondos en pesos según la planilla de la CAFCI (Schroder Liquidez Dolares es otro fondo)
+30;;^fci .*(dolar|u\$s|usd);FCI;FCI USD;USD;;
+31;;^maf cash dolares;FCI;FCI USD;USD;;
+32;;^fci .*(pesos|\$);FCI;FCI ARS;ARS;;
+33;;^fci fima premium;FCI;FCI ARS;ARS;;
+40;;^boncer ;Deuda sub-soberana;Sub-soberano ARS CER;ARS;CER;Boncer provincial
+41;;tzx|^bono boncer|^lecer|dicp;Deuda soberana;Soberano ARS CER;ARS;CER;Boncer, Lecer, serie TZX y Discount en pesos (DICP)
+42;;^bono dual|\bdual\b;Deuda soberana;Soberano ARS dual;ARS;dual;
+43;;^letra tesoro nac d\d;Deuda soberana;Soberano ARS dólar linked;ARS;dólar linked;D31M7 verificado: LELINK vinculada al dólar. Otras letras con prefijo D: confirmar caso por caso
+44;;^letra prov;Deuda sub-soberana;Sub-soberano ARS;ARS;;
+45;dolar;^bono del tesoro nacional;Deuda soberana;Soberano USD Argentina;USD;;
+46;dolar;^bono chile|^br brasil|^bc (brasil|el salvador|ecuador|chile|mexico|colombia|peru|uruguay|paraguay|panama|costa rica|republica dominicana|jamaica|guatemala|honduras|bolivia) \d;Deuda soberana;Soberano USD exterior;USD;;Bonos de países: el prefijo BC también lo usan los soberanos del exterior (auditoría A-01). El país solo cuenta si lo sigue un número (cupón o año): 'BC Peru LNG 2030' es una empresa
+47;dolar;^bono (prov|entre rios|neuquen);Deuda sub-soberana;Sub-soberano USD;USD;;
+48;peso;^bono (prov|entre rios|neuquen);Deuda sub-soberana;Sub-soberano ARS;ARS;;Sin indexacion informada
+50;;^on ;ON;ON {moneda};auto;;La CNV no informa tasa fija, variable o ajustable
+51;dolar;^bc ;Bono corporativo;Bono corporativo USD;USD;;
+52;dolar;^(ecopetrol|yinson|mv\d+ capital);Bono corporativo;Bono corporativo USD;USD;;Emisores corporativos sin prefijo (Ecopetrol, Yinson, MV24 Capital)

@@ -238,7 +238,7 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
             contenido.append((f"Costos y calificación: {fila.get('Clase', '')}", pd.DataFrame(
                 [(c, v) for c, v in fila.items() if c != "Clase"], columns=["Dato", "Valor"])))
     contenido += list(notas)
-    if not fondo["seguido"]:
+    if not fondo["seguido"] and not fondo.get("consulta_puntual"):
         contenido.append(filtros.AVISO_NO_SEGUIDO)
     else:
         if not serie.empty and serie["fecha"].nunique() >= 2:

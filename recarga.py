@@ -10,7 +10,8 @@ from pathlib import Path
 
 CARPETA = Path(__file__).resolve().parent
 # En orden de dependencia (formato antes que calculos, que lo usa).
-PROPIOS = ("formato", "estado", "horarios", "calculos", "filtros", "marca", "informe", "acceso", "datos")
+PROPIOS = ("formato", "estado", "horarios", "calculos", "filtros", "marca", "informe", "acceso", "datos",
+           "fuentes_consulta", "consulta_puntual")
 _vistos = {}
 
 

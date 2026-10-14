@@ -51,17 +51,28 @@ pedidos = calculos.preparar_pedidos(datos.pedidos_recientes())
 
 # ───────── Buscador ─────────
 st.subheader("Buscar un fondo")
-texto = st.text_input("Nombre del fondo o de la gerente", placeholder="Por ejemplo: galileo, compass, premium...")
+desde_ficha = st.session_state.pop("seguir_desde_ficha", None)
+if desde_ficha is not None:
+    elegido = catalogo[catalogo["codigo_cnv"] == desde_ficha]
+    if not elegido.empty:
+        st.session_state["buscar_fondos"] = elegido.iloc[0]["nombre"]
+        st.session_state["fondo_elegido"] = desde_ficha
+        st.session_state.update(pedidos_moneda="Todas", pedidos_situacion="Todos",
+                                pedidos_tipos=[], pedidos_rubros=[])
+texto = st.text_input("Nombre del fondo o de la gerente", placeholder="Por ejemplo: galileo, compass, premium...",
+                      key="buscar_fondos")
 c1, c2, c3 = st.columns(3)
 moneda = c1.radio("Moneda", ("Todas", *calculos.OPCIONES_MONEDA), horizontal=True,
-                  index=0)
-situacion = c2.radio("Situación", ("Todos", "Seguidos", "No seguidos"), horizontal=True)
+                  index=0, key="pedidos_moneda")
+situacion = c2.radio("Situación", ("Todos", "Seguidos", "No seguidos"), horizontal=True,
+                     key="pedidos_situacion")
 c3.caption(f"{int(catalogo['seguido'].sum())} fondos seguidos de {len(catalogo):,}".replace(",", "."))
 c4, c5 = st.columns(2)
 tipos = c4.multiselect("Tipo de fondo", sorted(catalogo["tipo_fondo"].dropna().unique()), placeholder="Todos",
-                       help="Tipo de fondo de la CAFCI. Sin elegir ninguno: todos.")
+                       help="Tipo de fondo de la CAFCI. Sin elegir ninguno: todos.", key="pedidos_tipos")
 rubros = c5.multiselect("Rubro", sorted(catalogo["rubro"].dropna().unique()), placeholder="Todos",
-                        help="Rubro del fondo: por cartera (fondos seguidos) o igual al tipo de fondo. Sin elegir ninguno: todos.")
+                        help="Rubro del fondo: por cartera (fondos seguidos) o igual al tipo de fondo. Sin elegir ninguno: todos.",
+                        key="pedidos_rubros")
 encontrados = calculos.filtrar_catalogo(catalogo, texto, moneda, tipos, rubros, situacion)
 if encontrados.empty:
     st.info("Ningún fondo cumple esa búsqueda.")
