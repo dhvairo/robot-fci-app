@@ -19,13 +19,18 @@ st.title("Resumen masivo de fondos")
 st.caption("Composición de la última cartera de los fondos que sigue el robot (fuente: CNV). "
            "Los fondos que se siguen se suman o se quitan con pedidos (la pantalla para pedirlos está en preparación).")
 
-todos = datos.fondos_ficha()
+transferencia = st.session_state.pop(calculos.SELECCION_INFORME, None)
+if transferencia is not None:
+    st.session_state["informe_catalogo_completo"] = True
+todos = datos.fondos_ficha(incluir_no_seguidos=st.session_state.get("informe_catalogo_completo", False))
 if todos.empty:
     st.info("No hay fondos seguidos.")
     st.stop()
 nombres = todos["nombre"].tolist()
+if transferencia is not None:
+    st.session_state["informe_fondos"] = todos.loc[todos.codigo_cnv.isin(transferencia), "nombre"].tolist()
 elegidos = st.multiselect("Fondos a incluir", nombres, default=nombres,
-                          help="Elegí los fondos seguidos que quieras: uno, varios o todos.")
+                          key="informe_fondos", help="Elegí los fondos que quieras: uno, varios o todos.")
 if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()

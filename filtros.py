@@ -7,6 +7,28 @@ CAMPOS = ("seguido", "moneda", "rubro", "categoria")
 TODOS = ("Todos", "Todas", "Todos", "Todas")
 
 
+def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=()):
+    """Casillas independientes; el control general marca/desmarca las disponibles."""
+    import hashlib
+    import streamlit as st
+    valores = list(dict.fromkeys(valores))
+    contexto = hashlib.sha256(repr(valores).encode("utf-8")).hexdigest()[:12]
+    llaves = {v: f"{clave}_{contexto}_{v}" for v in valores}
+    for v, llave in llaves.items():
+        if llave not in st.session_state:
+            st.session_state[llave] = v in preferidas
+    general = f"{clave}_{contexto}_todas"
+    st.session_state[general] = bool(valores) and all(st.session_state[k] for k in llaves.values())
+
+    def marcar():
+        for llave in llaves.values():
+            st.session_state[llave] = st.session_state[general]
+
+    st.markdown(f"**{etiqueta}**")
+    st.checkbox(todas, key=general, on_change=marcar)
+    return [v for v in valores if st.checkbox(formato(v), key=llaves[v])]
+
+
 def aplicar(fondos, situacion="Seguidos", moneda="Todas", rubro="Todos", categoria="Todas"):
     """Devuelve los fondos resultantes sin modificar el catálogo de entrada."""
     base = fondos

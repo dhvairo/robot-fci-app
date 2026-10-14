@@ -287,3 +287,58 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
         else:
             contenido.append("Todavía no hay cartera cargada para este fondo.")
     return pdf([{"titulo": fondo["nombre"], "contenido": contenido}], titulo_documento=f"Ficha: {fondo['nombre']}")
+
+
+def pdf_comparador(serie, tabla, modo, notas=()):
+    """Gráficos vectoriales de línea y selección; estilo y marca de Informe/Ficha."""
+    from reportlab.graphics import shapes
+    from reportlab.lib import colors
+    import pandas as pd
+
+    contenido = [f"Comparación: {modo}", *notas]
+    campos = []
+    if modo in ("R", "R y P"):
+        campos.append(("base 100", "Rendimiento (base 100)"))
+    if modo in ("P", "R y P"):
+        campos.append(("patrimonio", "Patrimonio (moneda de cada clase)"))
+    if not serie.empty:
+        inicio, fin = serie.fecha.min(), serie.fecha.max()
+        for campo, titulo in campos:
+            if campo not in serie or serie[campo].dropna().empty:
+                contenido.append(titulo + ": sin datos disponibles.")
+                continue
+            dibujo = shapes.Drawing(470, 230)
+            dibujo.add(shapes.String(0, 215, titulo, fontName="Helvetica-Bold", fontSize=10))
+            bajo, alto = float(serie[campo].min()), float(serie[campo].max())
+            if bajo == alto:
+                alto = bajo + 1
+            for k in range(5):
+                y = 45 + k * 35
+                dibujo.add(shapes.Line(65, y, 465, y, strokeColor=colors.HexColor("#D0D7E2")))
+                dibujo.add(shapes.String(0, y - 3, formato.numero(bajo + (alto - bajo) * k / 4), fontSize=7))
+            for i, (_, grupo) in enumerate(serie.groupby("codigo_cafci", sort=False)):
+                puntos = []
+                color = colors.HexColor(marca.paleta()[i % len(marca.paleta())])
+                def trazar():
+                    if len(puntos) >= 4:
+                        dibujo.add(shapes.PolyLine(puntos, strokeColor=color, strokeWidth=1.2))
+                    elif puntos:
+                        dibujo.add(shapes.Circle(*puntos, 2, fillColor=color, strokeColor=color))
+                for fila in grupo.sort_values("fecha").to_dict("records"):
+                    if pd.isna(fila[campo]):
+                        trazar()
+                        puntos = []
+                    else:
+                        puntos += [65 + (fila["fecha"] - inicio).days / max(1, (fin - inicio).days) * 400,
+                                   45 + (float(fila[campo]) - bajo) / (alto - bajo) * 140]
+                trazar()
+            dibujo.add(shapes.String(65, 25, formato.fecha(inicio), fontSize=8))
+            dibujo.add(shapes.String(465, 25, formato.fecha(fin), fontSize=8, textAnchor="end"))
+            contenido.append(dibujo)
+        leyenda = pd.DataFrame([
+            (g.iloc[0]["etiqueta"], marca.paleta()[i % len(marca.paleta())])
+            for i, (_, g) in enumerate(serie.groupby("codigo_cafci", sort=False))], columns=["Clase", "Color"])
+        contenido.append(("Clases de los gráficos", leyenda))
+    contenido.append(("Selección", tabla))
+    contenido.append("Rendimientos sobre la cuotaparte, sin considerar distribución de utilidades.")
+    return pdf([{"titulo": "Comparador", "contenido": contenido}], titulo_documento="Comparador")

@@ -1,88 +1,122 @@
-"""Comparador: evolución y rendimiento de clases de distintos fondos en un período."""
+"""Comparador: filtros comunes, selección por casillas, R/P y PDF."""
 from datetime import timedelta
 
-import plotly.express as px
+import pandas as pd
 import streamlit as st
 
 import recarga
-recarga.al_dia()          # si la app se publicó mientras estaba abierta, se leen los módulos nuevos (sin "Reboot")
+recarga.al_dia()
 
-import acceso  # noqa: E402
-import calculos  # noqa: E402
-import datos  # noqa: E402
-import formato  # noqa: E402
+import acceso
+import calculos
+import consulta_puntual
+import datos
+import filtros
+import formato
+import informe
+import marca
 
 st.set_page_config(page_title="Comparador", page_icon="📈", layout="wide")
 acceso.requerir()
 st.title("Comparador")
 
-cl = datos.clases_seguidas()
-if cl.empty:
-    st.info("No hay clases seguidas.")
+todos = datos.fondos_ficha(incluir_no_seguidos=True)
+if todos.empty:
+    st.info("No hay fondos en el catálogo.")
     st.stop()
-cl["etiqueta"] = cl.apply(lambda r: f"{r['fondo']} — {r['clase'].split(' - ')[-1]}", axis=1)
-
-mon = st.radio("Moneda", ["Todos", *calculos.OPCIONES_MONEDA], horizontal=True,
-               index=0,
-               help="Conviene comparar fondos de la misma moneda. Dólares incluye USD y USD billete.")
-base = calculos.filtrar_moneda(cl, mon)
+base = filtros.mostrar(todos, clave="comparador")
 if base.empty:
-    st.info(f"No hay clases seguidas en {mon.lower()}.")
+    st.info("No hay fondos para estos filtros.")
     st.stop()
-pref = [e for e, n in zip(base["etiqueta"], base["clase"]) if " - Clase A" in n or " - Clase B" in n]
-# Clase A y B de cada fondo; si en esta moneda ningún fondo las tiene, las clases que haya (como en la ficha).
-por_defecto = pref[:6] or base["etiqueta"].tolist()[:6]
-elegidas = st.multiselect("Clases a comparar", base["etiqueta"].tolist(), default=por_defecto)
+nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
+with st.expander("Fondos", expanded=True):
+    elegidos = filtros.casillas("Fondos", base.codigo_cnv.tolist(), "comparador_fondos",
+                               formato=nombres.get)
+if not elegidos:
+    st.info("Elegí al menos un fondo o marcá Todos.")
+    st.stop()
+fondos = base[base.codigo_cnv.isin(elegidos)]
+clases = []
+for f in fondos.to_dict("records"):
+    cl = datos.clases_de_fondo(int(f["codigo_cnv"])).copy()
+    cl = calculos.filtrar_moneda(cl, st.session_state["comparador_filtro_1"]).copy()
+    cl["codigo_cnv"] = int(f["codigo_cnv"])
+    cl["etiqueta"] = f["nombre"] + " — " + cl["nombre"].str.split(" - ").str[-1]
+    clases.append(cl)
+clases = pd.concat(clases, ignore_index=True)
+if clases.empty:
+    st.info("No hay clases disponibles para estos fondos y moneda.")
+    st.stop()
+preferidas = []
+for _, grupo in clases.groupby("codigo_cnv"):
+    preferidas += datos.clases_preferidas(grupo).codigo_cafci.tolist()
+etiquetas = clases.set_index("codigo_cafci").etiqueta.to_dict()
+with st.expander("Clase", expanded=True):
+    elegidas = filtros.casillas("Clase", clases.codigo_cafci.tolist(), "comparador_clases",
+                               todas="Todas", formato=etiquetas.get, preferidas=preferidas)
 if not elegidas:
     st.info("Elegí al menos una clase.")
     st.stop()
-sel = base[base["etiqueta"].isin(elegidas)]
-ser = datos.serie(sel["codigo_cafci"]).merge(sel[["codigo_cafci", "etiqueta", "moneda"]], on="codigo_cafci")
-if ser.empty or ser["fecha"].nunique() < 2:
-    st.info("Todavía no hay suficiente historia de cuotapartes (se completa con la carga histórica).")
-    st.stop()
+sel = clases[clases.codigo_cafci.isin(elegidas)]
+fondos = fondos[fondos.codigo_cnv.isin(sel.codigo_cnv)]
+modo = st.radio("Qué comparar", ["R", "P", "R y P"], horizontal=True,
+                format_func=lambda x: {"R": "Rendimiento (R)", "P": "Patrimonio (P)", "R y P": "R y P"}[x])
+if st.button("Ver estos fondos en el Informe descriptivo"):
+    calculos.enviar_al_informe(st.session_state, fondos.codigo_cnv)
+    st.switch_page("pages/5_Resumen_masivo_de_fondos.py")
 
-ultimo, primero = ser["fecha"].max(), ser["fecha"].min()
-periodos = {"7 días": 7, "30 días": 30, "90 días": 90, "6 meses": 182, "12 meses": 365, "Todo": None}
-per = st.radio("Período", [*periodos, "Desde / Hasta"], index=1, horizontal=True)
-if per == "Desde / Hasta":
-    c1, c2 = st.columns(2)
-    desde = c1.date_input("Desde", value=max(primero, ultimo - timedelta(days=30)), min_value=primero,
-                          max_value=ultimo, format="DD/MM/YYYY")
-    hasta = c2.date_input("Hasta", value=ultimo, min_value=primero, max_value=ultimo, format="DD/MM/YYYY")
-    aviso = calculos.validar_periodo(desde, hasta)
-    if aviso:
-        st.warning(aviso)
-        st.stop()
-else:
-    desde = primero if periodos[per] is None else max(primero, ultimo - timedelta(days=periodos[per]))
-    hasta = ultimo
-st.caption(f"Desde {formato.fecha(desde)} hasta {formato.fecha(hasta)}")
+cache = st.session_state.setdefault("consulta_puntual", {})
+def cargar(fondo):
+    with st.spinner(f"Cargando… {fondo['nombre']}"):
+        return consulta_puntual.cargar(fondo, cache, consulta_puntual.token_configurado(st.secrets))
 
-# Cada clase parte de su primer valor dentro del período (base 100).
-ser = calculos.base_100(ser, desde, hasta)
+ser, notas = calculos.historia_comparador(fondos, sel, datos.serie, cargar)
+if (~fondos.seguido).any():
+    notas.insert(0, consulta_puntual.LEYENDA)
+graficos = []
+serie_pdf = ser
+mostrar = sel[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "moneda": "Moneda"})
 if ser.empty:
-    st.info("No hay datos de cuotapartes en ese período.")
-    st.stop()
-fig = px.line(ser, x="fecha", y="base 100", color="etiqueta", title="Evolución (base 100 al inicio del período)")
-fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
-
-res = ser.groupby(["etiqueta", "moneda"]).agg(primera=("fecha", "min"), ultima=("fecha", "max"),
-                                              valor_inicial=("cuotaparte", "first"),
-                                              valor_final=("cuotaparte", "last"),
-                                              observaciones=("fecha", "count")).reset_index()
-res["Rendimiento %"] = (res["valor_final"] / res["valor_inicial"] - 1) * 100
-res = res.sort_values("Rendimiento %", ascending=False)
-mostrar = res.rename(columns={"etiqueta": "Clase", "moneda": "Moneda", "primera": "Desde",
-                              "ultima": "Hasta", "observaciones": "Datos"})[
-    ["Clase", "Moneda", "Desde", "Hasta", "Datos", "Rendimiento %"]]
-st.dataframe(formato.tabla(mostrar, fechas=["Desde", "Hasta"], enteros=["Datos"], numeros={"Rendimiento %": 2}),
-             hide_index=True, width="stretch")
-sin_cobertura = calculos.clases_sin_cobertura(ser, desde, hasta)
-if sin_cobertura:
-    st.warning("No tienen datos en todo el período (su rendimiento cubre menos días): " + ", ".join(sin_cobertura) + ".")
-if sel["moneda"].nunique() > 1:
-    st.warning("Estás comparando monedas distintas: los rendimientos no son directamente comparables.")
-st.caption("Rendimientos sobre la cuotaparte, sin considerar distribución de utilidades. "
-           "No es una recomendación de inversión.")
+    notas.append("Sin historia disponible para esta selección.")
+else:
+    ultimo, primero = ser.fecha.max(), ser.fecha.min()
+    periodos = {"7 días": 7, "30 días": 30, "90 días": 90, "6 meses": 182, "12 meses": 365, "Todo": None}
+    per = st.radio("Período", [*periodos, "Desde / Hasta"], index=1, horizontal=True)
+    if per == "Desde / Hasta":
+        c1, c2 = st.columns(2)
+        desde = c1.date_input("Desde", value=max(primero, ultimo - timedelta(days=30)),
+                              min_value=primero, max_value=ultimo, format="DD/MM/YYYY")
+        hasta = c2.date_input("Hasta", value=ultimo, min_value=primero, max_value=ultimo, format="DD/MM/YYYY")
+        aviso = calculos.validar_periodo(desde, hasta)
+        if aviso:
+            st.warning(aviso)
+            st.stop()
+    else:
+        desde = primero if periodos[per] is None else max(primero, ultimo - timedelta(days=periodos[per]))
+        hasta = ultimo
+    st.caption(f"Desde {formato.fecha(desde)} hasta {formato.fecha(hasta)}")
+    serie_pdf, resumen, graficos = calculos.comparar(ser, desde, hasta, modo)
+    mostrar = mostrar.merge(resumen, on=["Clase", "Moneda"], how="left")
+    for fig in graficos:
+        st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
+    sin_cobertura = calculos.clases_sin_cobertura(serie_pdf, desde, hasta)
+    sin_periodo = set(sel.etiqueta) - set(serie_pdf.etiqueta)
+    if sin_periodo:
+        notas.append("Sin datos en el período: " + ", ".join(sorted(sin_periodo)) + ".")
+    if sin_cobertura:
+        notas.append("No tienen datos en todo el período: " + ", ".join(sin_cobertura) + ".")
+if sel.moneda.nunique() > 1:
+    notas.append("Estás comparando monedas distintas: los rendimientos y patrimonios no son directamente comparables.")
+if modo in ("P", "R y P") and (ser.empty or ser.patrimonio.isna().any()):
+    notas.append("Patrimonio no disponible en algunas fechas o clases; los huecos no se interpolan.")
+for nota in notas:
+    st.warning(nota)
+tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta") if c in mostrar],
+                      enteros=[c for c in ("Datos", "Patrimonio") if c in mostrar],
+                      numeros={"Rendimiento %": 2} if "Rendimiento %" in mostrar else {})
+st.dataframe(tabla, hide_index=True, width="stretch")
+st.download_button("Descargar comparador en PDF",
+                   data=informe.pdf_comparador(serie_pdf, tabla, modo, notas),
+                   file_name="comparador.pdf", mime="application/pdf")
+st.caption("Rendimientos sobre la cuotaparte, sin considerar distribución de utilidades.")
+st.caption(marca.actual()["texto_legal"])

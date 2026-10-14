@@ -6,6 +6,66 @@ import pandas as pd
 
 import formato
 
+# U12: lista de códigos CNV (int), de un solo uso, dentro de la sesión autenticada.
+SELECCION_INFORME = "informe_desde_comparador"
+
+
+def enviar_al_informe(sesion, codigos):
+    sesion[SELECCION_INFORME] = list(dict.fromkeys(int(c) for c in codigos))
+
+
+def historia_comparador(fondos, clases, leer_serie, cargar_puntual):
+    """Fuentes inyectables; un fondo sin historia no interrumpe a los demás."""
+    partes, avisos = [], []
+    for fondo in fondos.to_dict("records"):
+        codigos = clases.loc[clases.codigo_cnv.eq(fondo["codigo_cnv"]), "codigo_cafci"]
+        if codigos.empty:
+            continue
+        if fondo["seguido"]:
+            historia = leer_serie(codigos)
+        else:
+            resultado = cargar_puntual(fondo)
+            historia = resultado["serie"]
+            avisos += [f"{fondo['nombre']}: {a}" for a in resultado["avisos"]]
+        historia = historia[historia.codigo_cafci.isin(codigos)]
+        faltantes = set(codigos) - set(historia.codigo_cafci)
+        if historia.empty:
+            avisos.append(f"{fondo['nombre']}: sin historia disponible para las clases elegidas.")
+        elif faltantes:
+            avisos.append(f"{fondo['nombre']}: sin historia en las clases " + ", ".join(
+                clases.loc[clases.codigo_cafci.isin(faltantes), "etiqueta"]) + ".")
+        if not historia.empty:
+            partes.append(historia)
+    columnas = ["codigo_cafci", "fecha", "cuotaparte", "patrimonio"]
+    serie = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=columnas)
+    return serie.merge(clases[["codigo_cafci", "etiqueta", "moneda"]], on="codigo_cafci"), avisos
+
+
+def comparar(serie, desde, hasta, modo):
+    """Datos comunes a pantalla y PDF: R base 100, P en moneda de cada clase."""
+    import plotly.express as px
+    import marca
+    serie = base_100(serie, desde, hasta)
+    especificaciones = []
+    if modo in ("R", "R y P"):
+        especificaciones.append(("base 100", "Rendimiento (base 100)"))
+    if modo in ("P", "R y P"):
+        especificaciones.append(("patrimonio", "Patrimonio (moneda de cada clase)"))
+    graficos = []
+    for campo, titulo in especificaciones:
+        fig = px.line(serie, x="fecha", y=campo, color="etiqueta", title=titulo,
+                      color_discrete_sequence=marca.paleta())
+        fig.update_traces(connectgaps=False)
+        fig.update_xaxes(range=[desde, hasta])
+        fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
+        graficos.append(fig)
+    resumen = serie.groupby(["etiqueta", "moneda"], sort=False).agg(
+        Desde=("fecha", "min"), Hasta=("fecha", "max"), Datos=("fecha", "count"),
+        inicial=("cuotaparte", "first"), final=("cuotaparte", "last"),
+        Patrimonio=("patrimonio", lambda s: s.iloc[-1])).reset_index()
+    resumen["Rendimiento %"] = (resumen.pop("final") / resumen.pop("inicial") - 1) * 100
+    return serie, resumen.rename(columns={"etiqueta": "Clase", "moneda": "Moneda"}), graficos
+
 PESOS = ("ARS",)
 DOLARES = ("USD", "USB")           # Dólares incluye USD y USD billete
 OPCIONES_MONEDA = ("Pesos", "Dólares")
