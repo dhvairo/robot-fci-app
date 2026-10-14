@@ -90,12 +90,16 @@ def fondos_seguidos():
                      "where seguido order by nombre")
 
 
-def fondos_ficha():
-    """Fondos seguidos con todos los datos de la cabecera de la ficha (pedido 2.1 de octubre).
+def fondos_ficha(incluir_no_seguidos=False):
+    """Cabecera y primera categoría de los seguidos; incluir_no_seguidos habilita todo el catálogo.
 
     patrimonio_neto = suma del patrimonio de sus clases con dato normal (sin marca de estado), en la moneda del fondo."""
     return consultar(
-        "select f.codigo_cnv, f.nombre, f.moneda, f.estado, f.id_ficha_web, f.rubro, f.tipo_fondo, "
+        "select f.codigo_cnv, f.nombre, f.moneda, f.estado, f.id_ficha_web, f.seguido, "
+        "case when f.seguido then coalesce(nullif(f.rubro, ''), f.tipo_fondo) "
+        "else coalesce(nullif(f.tipo_fondo, ''), 'Sin dato') end as rubro, f.tipo_fondo, "
+        "case when f.seguido then coalesce(t.categoria_detallada, 'Sin cartera') "
+        "else 'Sin cartera' end as categoria, "
         "f.clasificacion_cnv, f.region, f.horizonte, f.descripcion_breve, f.tematica, f.tematica_provisoria, "
         "g.nombre as gerente, d.nombre as depositaria, "
         "(select sum(p.patrimonio) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
@@ -103,10 +107,10 @@ def fondos_ficha():
         "(select max(p.fecha_dato) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
         "and p.marca_estado = '') as fecha_valores, "
         "(select max(x.fecha_cartera) from carteras_fechas x where x.codigo_cnv = f.codigo_cnv) as fecha_cartera "
-        "from fondos f "
+        "from fondos f left join fondos_tenencias t on t.codigo_cnv=f.codigo_cnv and t.posicion=1 "
         "left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
         "left join sociedades d on d.tipo = 'depositaria' and d.codigo = f.codigo_depositaria "
-        "where f.seguido order by f.nombre")
+        + ("" if incluir_no_seguidos else "where f.seguido ") + "order by f.nombre")
 
 
 def resumen_carteras():
@@ -139,6 +143,21 @@ def clases_gestion():
 def clases_de_fondo(codigo_cnv):
     return consultar("select codigo_cafci, nombre, moneda from clases "
                      "where codigo_cnv = %s and vigente_hasta is null order by nombre", (codigo_cnv,))
+
+
+def foto_de_fondo(codigo_cnv):
+    """Datos CAFCI y costos del catálogo; no requiere historia ni cartera."""
+    return consultar(
+        "select c.codigo_cafci, c.nombre, c.moneda, p.fecha_dato as fecha, "
+        "case when p.marca_estado = '' then p.cuotaparte end as cuotaparte, "
+        "case when p.marca_estado = '' then p.patrimonio end as patrimonio, "
+        "case when p.marca_estado = '' then p.rend_mes end as mes, "
+        "case when p.marca_estado = '' then p.rend_anio end as anio, "
+        "case when p.marca_estado = '' then p.rend_12m end as meses_12, "
+        "p.calificacion, p.marca_estado, c.honorarios_sg, c.honorarios_sd, c.gastos_ordinarios, "
+        "c.comision_ingreso, c.comision_rescate, c.comision_transferencia, c.honorarios_exito "
+        "from clases c left join foto_clases p using (codigo_cafci) "
+        "where c.codigo_cnv=%s and c.vigente_hasta is null order by c.nombre", (codigo_cnv,))
 
 
 def clases_seguidas():

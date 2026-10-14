@@ -162,6 +162,31 @@ def pdf(secs, titulo_documento=None):
             imagen.drawHeight = imagen.imageHeight * factor
             imagen.hAlign = "LEFT"
             historia.extend([imagen, Spacer(1, 4)])
+        if "contenido" in sec:
+            historia += [Paragraph(escape(sec["titulo"]), s_titulo), Spacer(1, 8)]
+            for bloque in sec["contenido"]:
+                if isinstance(bloque, str):
+                    historia += [Paragraph(escape(bloque), s_sub), Spacer(1, 6)]
+                elif isinstance(bloque, tuple):
+                    titulo, tabla = bloque
+                    if tabla.empty:
+                        continue
+                    historia += [Paragraph(escape(titulo), s_negrita), Spacer(1, 5)]
+                    filas = [[Paragraph(escape(str(c)), s_cab) for c in tabla.columns]]
+                    filas += [[Paragraph(f'<font color="{v}">------</font>' if c == "Color" else escape(str(v)), s_celda)
+                               for c, v in zip(tabla.columns, fila)] for fila in tabla.itertuples(index=False, name=None)]
+                    # La primera columna contiene los nombres de clase/instrumento.
+                    n = len(tabla.columns)
+                    anchos = [ancho] if n == 1 else [ancho * .28] + [ancho * .72 / (n - 1)] * (n - 1)
+                    t = Table(filas, colWidths=anchos, repeatRows=1, hAlign="LEFT")
+                    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), azul),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LINEBELOW", (0, 0), (-1, -1), .4, colors.HexColor("#D0D7E2")),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#EEF2F8")])]))
+                    historia += [t, Spacer(1, 10)]
+                else:
+                    historia += [bloque, Spacer(1, 10)]
+            continue
         historia += [Paragraph(escape(sec["titulo"]), s_titulo), Paragraph(escape(sec["subtitulo"]), s_sub),
                      Paragraph(escape(sec["aclaracion"]), s_sub), Spacer(1, 6),
                      _dibujar_torta(sec, ancho, colors, shapes), Spacer(1, 8)]
@@ -186,3 +211,79 @@ def pdf(secs, titulo_documento=None):
                             author=config["nombre"])
     doc.build(historia, onFirstPage=pie, onLaterPages=pie)
     return buf.getvalue()
+
+
+def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
+    """Ficha con las selecciones actuales; reutiliza estilo, marca y pie legal de pdf()."""
+    import calculos
+    import filtros
+    import pandas as pd
+    from reportlab.graphics import shapes
+    from reportlab.graphics.charts.piecharts import Pie
+    from reportlab.lib import colors
+
+    contenido = [f"Código CNV {fondo['codigo_cnv']} · {formato.texto_o_guion(fondo.get('estado'))}"]
+    contenido += [f"{etiqueta}: {valor}" for etiqueta, valor in calculos.cabecera_fondo(fondo)]
+    contenido += ["Descripción breve: " + formato.texto_o_guion(fondo.get("descripcion_breve")),
+                  "Idea y temática: " + formato.texto_o_guion(fondo.get("tematica"))]
+    if not clases.empty:
+        valores = [c for c in clases if not c.endswith("%")]
+        rendimientos = ["Clase"] + [c for c in clases if c.endswith("%")]
+        contenido += [("Clases", clases[valores]), ("Rendimientos", clases[rendimientos])]
+    else:
+        contenido.append("Sin clases seleccionadas o disponibles.")
+    if costos is not None and not costos.empty:
+        # Costos por clase en vertical para conservar legibilidad en A4.
+        for _, fila in costos.iterrows():
+            contenido.append((f"Costos y calificación: {fila.get('Clase', '')}", pd.DataFrame(
+                [(c, v) for c, v in fila.items() if c != "Clase"], columns=["Dato", "Valor"])))
+    contenido += list(notas)
+    if not fondo["seguido"]:
+        contenido.append(filtros.AVISO_NO_SEGUIDO)
+    else:
+        if not serie.empty and serie["fecha"].nunique() >= 2:
+            # Dibujo vectorial: no necesita Kaleido ni un navegador en Streamlit.
+            dibujo = shapes.Drawing(500, 245)
+            dibujo.add(shapes.String(0, 231, "Evolución de la cuotaparte (base 100)", fontName="Helvetica-Bold", fontSize=10))
+            bajo, alto = float(serie["base 100"].min()), float(serie["base 100"].max())
+            if alto == bajo:
+                alto = bajo + 1
+            inicio, fin = serie.fecha.min(), serie.fecha.max()
+            for k in range(5):
+                y = 48 + k * 35
+                dibujo.add(shapes.Line(48, y, 490, y, strokeColor=colors.HexColor("#D0D7E2")))
+                dibujo.add(shapes.String(0, y - 3, formato.numero(bajo + (alto - bajo) * k / 4), fontSize=7))
+            for i, (_, grupo) in enumerate(serie.groupby("codigo_cafci")):
+                grupo = grupo.sort_values("fecha")
+                puntos = []
+                for _, r in grupo.iterrows():
+                    puntos += [48 + (r.fecha - inicio).days / max(1, (fin - inicio).days) * 442,
+                               48 + (float(r["base 100"]) - bajo) / (alto - bajo) * 140]
+                color = colors.HexColor(marca.paleta()[i % len(marca.paleta())])
+                dibujo.add(shapes.PolyLine(puntos, strokeColor=color, strokeWidth=1.2))
+            dibujo.add(shapes.String(48, 30, formato.fecha(inicio), fontSize=8))
+            dibujo.add(shapes.String(490, 30, formato.fecha(fin), textAnchor="end", fontSize=8))
+            contenido.append(dibujo)
+            contenido.append(("Clases del gráfico", pd.DataFrame([
+                (g.iloc[0]["nombre"], marca.paleta()[i % len(marca.paleta())])
+                for i, (_, g) in enumerate(serie.groupby("codigo_cafci"))], columns=["Clase", "Color"])))
+        else:
+            contenido.append("Historia insuficiente para el gráfico de evolución.")
+        if not rubros.empty:
+            dibujo = shapes.Drawing(500, 215)
+            dibujo.add(shapes.String(0, 200, "Cartera por rubro (% del patrimonio)", fontName="Helvetica-Bold", fontSize=10))
+            torta = Pie()
+            torta.x, torta.y, torta.width, torta.height = 170, 5, 180, 180
+            torta.data = rubros.pct_pn.astype(float).tolist()
+            torta.labels = None
+            for i in range(len(rubros)):
+                torta.slices[i].fillColor = colors.HexColor(marca.paleta()[i % len(marca.paleta())])
+            dibujo.add(torta)
+            leyenda = formato.tabla(rubros.rename(columns={
+                "categoria_resumen": "Rubro", "pct_pn": "% del PN"}), numeros={"% del PN": 2})
+            leyenda["Color"] = [marca.paleta()[i % len(marca.paleta())] for i in range(len(leyenda))]
+            contenido += [dibujo, ("Rubros", leyenda),
+                ("10 mayores tenencias (selección actual)", tenencias)]
+        else:
+            contenido.append("Todavía no hay cartera cargada para este fondo.")
+    return pdf([{"titulo": fondo["nombre"], "contenido": contenido}], titulo_documento=f"Ficha: {fondo['nombre']}")

@@ -54,7 +54,7 @@ st.subheader("Buscar un fondo")
 texto = st.text_input("Nombre del fondo o de la gerente", placeholder="Por ejemplo: galileo, compass, premium...")
 c1, c2, c3 = st.columns(3)
 moneda = c1.radio("Moneda", ("Todas", *calculos.OPCIONES_MONEDA), horizontal=True,
-                  index=acceso.indice_moneda(("Todas", *calculos.OPCIONES_MONEDA)))
+                  index=0)
 situacion = c2.radio("Situación", ("Todos", "Seguidos", "No seguidos"), horizontal=True)
 c3.caption(f"{int(catalogo['seguido'].sum())} fondos seguidos de {len(catalogo):,}".replace(",", "."))
 c4, c5 = st.columns(2)

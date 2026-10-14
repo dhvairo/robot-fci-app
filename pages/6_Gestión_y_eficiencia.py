@@ -23,7 +23,7 @@ if todas.empty:
 
 # ───────── Filtros ─────────
 moneda = st.radio("Moneda", calculos.OPCIONES_MONEDA, horizontal=True,
-                  index=acceso.indice_moneda(calculos.OPCIONES_MONEDA),
+                  index=0,
                   help="Obligatoria: los patrimonios no se comparan entre monedas. Dólares incluye USD y USD billete.")
 base = calculos.filtrar_moneda(todas, moneda)
 c1, c2 = st.columns(2)

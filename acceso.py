@@ -233,33 +233,6 @@ def _pantalla_usuarios():
             st.error(str(error))
 
 
-def indice_moneda(opciones):
-    persona = usuario()
-    if not persona or persona["cambio_obligatorio"]:
-        return 0
-    valor = st.session_state.get("moneda_defecto", "Pesos")
-    return list(opciones).index(valor) if valor in opciones else 0
-
-
-def preferencias_inicio():
-    if not usuario():
-        return
-    with st.expander("Preferencias"):
-        opciones = ("Pesos", "Dólares")
-        with st.form("preferencia_moneda"):
-            valor = st.selectbox("Moneda por defecto", opciones, index=indice_moneda(opciones))
-            guardar = st.form_submit_button("Guardar preferencia")
-        if guardar:
-            import datos
-            try:
-                persona = _validar_sesion()
-                datos.guardar_preferencia(persona, "moneda", valor)
-                st.session_state["moneda_defecto"] = valor
-                st.success("Preferencia guardada.")
-            except (ErrorAcceso, datos.ErrorPreferencias):
-                st.error("No se pudo guardar la preferencia.")
-
-
 def requerir():
     """Único control de todas las pantallas; exige cambiar la clave antes de mostrar datos."""
     import marca
@@ -293,8 +266,6 @@ def requerir():
         try:
             import datos
             st.session_state["marca"] = datos.organizacion(persona)
-            if "moneda_defecto" not in st.session_state:
-                st.session_state["moneda_defecto"] = datos.leer_preferencia(persona, "moneda") or "Pesos"
         except datos.ErrorPreferencias:
             st.error("No se pudo cargar la organización y sus preferencias.")
             st.stop()

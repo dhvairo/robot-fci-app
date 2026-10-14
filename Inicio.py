@@ -20,7 +20,6 @@ import horarios  # noqa: E402
 st.set_page_config(page_title=marca.nombre(), page_icon="📈", layout="wide")
 acceso.requerir()
 st.title(marca.nombre())
-acceso.preferencias_inicio()
 st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura: lo único que la app puede hacer es anotar pedidos de seguir o dejar de seguir fondos.")
 
 r = datos.resumen_base()

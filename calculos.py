@@ -102,6 +102,7 @@ def cabecera_fondo(f):
         datos.append(("Clasificación CNV", str(f["clasificacion_cnv"]).strip()))
     datos += [
         ("Tipo de fondo (CAFCI)", _texto(f.get("tipo_fondo"))),
+        ("Categoría", _texto(f.get("categoria"))),
         ("Moneda", NOMBRE_MONEDA.get(moneda, formato.VACIO)),
         ("Región", REGIONES.get(f.get("region"), _texto(f.get("region")))),
         ("Horizonte", HORIZONTES.get(f.get("horizonte"), _texto(f.get("horizonte")))),
@@ -380,3 +381,14 @@ def preparar_pedidos(df):
     df["estado_texto"] = df["estado"].map(ESTADOS_PEDIDO).fillna(df["estado"])
     df.loc[problema & repetido, "estado_texto"] = "Problema (se volvió a pedir)"
     return df
+
+
+def costos_ficha(tabla):
+    """Costos y calificación disponibles de CAFCI/catálogo, formateados para pantalla y PDF."""
+    etiquetas = {"Clase": "Clase", "calificacion": "Calificación", "marca_estado": "Estado CAFCI",
+        "honorarios_sg": "Honorarios gerente %", "honorarios_sd": "Honorarios depositaria %",
+        "gastos_ordinarios": "Gastos ordinarios %", "comision_ingreso": "Ingreso %",
+        "comision_rescate": "Rescate %", "comision_transferencia": "Transferencia %",
+        "honorarios_exito": "Éxito %"}
+    salida = tabla[[c for c in etiquetas if c in tabla]].rename(columns=etiquetas)
+    return formato.tabla(salida, numeros={c: 4 for c in salida if c.endswith("%")}).fillna(formato.VACIO)
