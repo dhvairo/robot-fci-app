@@ -7,11 +7,34 @@ CAMPOS = ("seguido", "moneda", "rubro", "categoria")
 TODOS = ("Todos", "Todas", "Todos", "Todas")
 
 
-def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=()):
+def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=(),
+             persistente=False, visibles=None):
     """Casillas independientes; el control general marca/desmarca las disponibles."""
     import hashlib
     import streamlit as st
     valores = list(dict.fromkeys(valores))
+    if persistente:
+        memoria = st.session_state.setdefault(f"{clave}_memoria", {})
+        visibles = valores if visibles is None else [v for v in visibles if v in valores]
+        for v in valores:
+            memoria.setdefault(v, v in preferidas)
+        llaves = {v: f"{clave}_casilla_{v}" for v in visibles}
+        general = f"{clave}_todas"
+
+        def guardar(v):
+            memoria[v] = st.session_state[llaves[v]]
+
+        def marcar_visibles():
+            for v in visibles:
+                memoria[v] = st.session_state[general]
+
+        st.markdown(f"**{etiqueta}**")
+        st.session_state[general] = bool(visibles) and all(memoria[v] for v in visibles)
+        st.checkbox(todas, key=general, on_change=marcar_visibles, disabled=not visibles)
+        for v, llave in llaves.items():
+            st.session_state[llave] = memoria[v]
+            st.checkbox(formato(v), key=llave, on_change=guardar, args=(v,))
+        return [v for v in valores if memoria[v]]
     contexto = hashlib.sha256(repr(valores).encode("utf-8")).hexdigest()[:12]
     llaves = {v: f"{clave}_{contexto}_{v}" for v in valores}
     for v, llave in llaves.items():
@@ -53,7 +76,7 @@ def opciones(fondos, nivel, anteriores=(), todas_monedas=True):
     return [TODOS[nivel], *sorted(base[CAMPOS[nivel]].dropna().unique())]
 
 
-def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas"):
+def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False):
     import streamlit as st
     elegidas = []
     for nivel, (col, etiqueta) in enumerate(zip(st.columns(4), ("Fondos", "Moneda", "Rubro", "Categoría"))):
@@ -63,9 +86,14 @@ def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas"):
         if nivel == 1:
             valores = [moneda_todos if v == "Todas" else v for v in valores]
         llave = f"{clave}_filtro_{nivel}"
+        memoria = f"{llave}_memoria"
+        if persistente and llave not in st.session_state and memoria in st.session_state:
+            st.session_state[llave] = st.session_state[memoria]
         if st.session_state.get(llave) not in valores:
             st.session_state[llave] = valores[0]
         valor = col.selectbox(etiqueta, valores, key=llave)
+        if persistente:
+            st.session_state[memoria] = valor
         elegidas.append("Todas" if nivel == 1 and valor == moneda_todos else valor)
     return aplicar(fondos, *elegidas)
 
@@ -84,3 +112,15 @@ def situacion(fondos, clave, defecto="Todos"):
     opciones = ["Seguidos", "No seguidos", "Todos"]
     valor = st.selectbox("Fondos", opciones, index=opciones.index(defecto), key=clave)
     return aplicar(fondos, situacion=valor)
+
+
+def buscar_denominacion(fondos, texto):
+    """Búsqueda literal parcial, sin distinguir mayúsculas; conserva orden y códigos."""
+    return fondos[fondos.nombre.str.casefold().str.contains(texto.strip().casefold(), regex=False, na=False)]
+
+
+def restablecer_comparador(sesion):
+    """Comienza otra comparación; no toca el pase al Informe ni preferencias."""
+    for llave in list(sesion):
+        if llave.startswith("comparador_"):
+            del sesion[llave]

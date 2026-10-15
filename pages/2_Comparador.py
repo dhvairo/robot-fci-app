@@ -20,19 +20,32 @@ st.set_page_config(page_title="Comparador", page_icon="📈", layout="wide")
 acceso.requerir()
 st.title("Comparador")
 
+st.button("Restablecer", on_click=filtros.restablecer_comparador, args=(st.session_state,))
+
 todos = datos.fondos_ficha(incluir_no_seguidos=True)
 if todos.empty:
     st.info("No hay fondos en el catálogo.")
     st.stop()
-base = filtros.mostrar(todos, clave="comparador")
+base = filtros.mostrar(todos, clave="comparador", persistente=True)
 if base.empty:
     st.info("No hay fondos para estos filtros.")
     st.stop()
 nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
-with st.expander("Fondos", expanded=True):
+with st.expander("Fondos", expanded=False):
+    def guardar_busqueda():
+        st.session_state["comparador_busqueda_memoria"] = st.session_state["comparador_busqueda"]
+
+    if "comparador_busqueda" not in st.session_state:
+        st.session_state["comparador_busqueda"] = st.session_state.get("comparador_busqueda_memoria", "")
+    texto = st.text_input("Buscar por denominación", key="comparador_busqueda", on_change=guardar_busqueda)
+    visibles = filtros.buscar_denominacion(base, texto)
+    if visibles.empty:
+        st.info("No hay fondos para esta búsqueda.")
     elegidos = filtros.casillas("Fondos", base.codigo_cnv.tolist(), "comparador_fondos",
-                               formato=nombres.get)
+                               formato=nombres.get, persistente=True, visibles=visibles.codigo_cnv.tolist())
 if not elegidos:
+    with st.expander("Clase", expanded=False):
+        st.info("Seleccioná fondos para ver sus clases.")
     st.info("Elegí al menos un fondo o marcá Todos.")
     st.stop()
 fondos = base[base.codigo_cnv.isin(elegidos)]
@@ -51,9 +64,9 @@ preferidas = []
 for _, grupo in clases.groupby("codigo_cnv"):
     preferidas += datos.clases_preferidas(grupo).codigo_cafci.tolist()
 etiquetas = clases.set_index("codigo_cafci").etiqueta.to_dict()
-with st.expander("Clase", expanded=True):
+with st.expander("Clase", expanded=False):
     elegidas = filtros.casillas("Clase", clases.codigo_cafci.tolist(), "comparador_clases",
-                               todas="Todas", formato=etiquetas.get, preferidas=preferidas)
+                               todas="Todas", formato=etiquetas.get, preferidas=preferidas, persistente=True)
 if not elegidas:
     st.info("Elegí al menos una clase.")
     st.stop()
