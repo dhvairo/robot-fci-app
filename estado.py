@@ -61,5 +61,6 @@ def semaforo(hoy, ultimo_valor, ultima_cartera):
         elif dias <= DIAS_CARTERA_AVISO:
             out.append(("aviso", f"La última cartera es del {f} ({dias} días). Puede estar demorada la semanal."))
         else:
-            out.append(("error", f"La última cartera es del {f} ({dias} días): el robot semanal puede estar fallando."))
+            out.append(("error", f"La última cartera es del {f} ({dias} días). Esta alerta mide la antigüedad "
+                                 "del dato, no el estado de ejecución del robot."))
     return out

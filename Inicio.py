@@ -9,11 +9,13 @@ import streamlit as st
 
 import recarga
 recarga.al_dia()          # si la app se publicó mientras estaba abierta, se leen los módulos nuevos (sin "Reboot")
+recarga.al_dia(("operacion",))
 
 import acceso  # noqa: E402
 import marca  # noqa: E402
 import datos  # noqa: E402
 import estado  # noqa: E402
+import operacion  # noqa: E402
 import formato  # noqa: E402
 import horarios  # noqa: E402
 
@@ -21,6 +23,17 @@ st.set_page_config(page_title=marca.nombre(), page_icon="📈", layout="wide")
 acceso.requerir()
 st.title(marca.nombre())
 st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura: lo único que la app puede hacer es anotar pedidos de seguir o dejar de seguir fondos.")
+
+st.subheader("Última ejecución del robot")
+op = operacion.obtener(st.secrets)
+for nombre, ejecucion in op["flujos"].items():
+    {"ok": st.success, "aviso": st.warning, "error": st.error}[ejecucion["nivel"]](
+        f"Robot {nombre}: {ejecucion['estado']}. Inicio de última ejecución (Argentina): {ejecucion['fecha']}")
+    st.link_button(f"Ver Actions: {nombre}", ejecucion["enlace"])
+st.caption(f"Consulta: {op['consultado']:%d/%m/%Y %H:%M:%S}. "
+           f"Caché compartida hasta {op['vence']:%d/%m/%Y %H:%M:%S} (Argentina; 10 minutos). "
+           "El estado de ejecución es independiente de la antigüedad del dato. "
+           "Los enlaces a Actions requieren acceso al repositorio privado.")
 
 r = datos.resumen_base()
 
