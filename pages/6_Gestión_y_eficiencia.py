@@ -9,6 +9,7 @@ import acceso  # noqa: E402
 import calculos  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
+import filtros  # noqa: E402
 
 st.set_page_config(page_title="Gestión y eficiencia", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -22,6 +23,8 @@ if todas.empty:
     st.stop()
 
 # ───────── Filtros ─────────
+catalogo = filtros.situacion(datos.fondos_ficha(incluir_no_seguidos=True), "gestion_situacion")
+todas = todas[todas.codigo_cnv.isin(catalogo.codigo_cnv)]
 moneda = st.radio("Moneda", calculos.OPCIONES_MONEDA, horizontal=True,
                   index=0,
                   help="Obligatoria: los patrimonios no se comparan entre monedas. Dólares incluye USD y USD billete.")
@@ -49,7 +52,7 @@ ver_todas = st.checkbox("Ver todas las clases", value=False,
 clases = calculos.orden_inicial(calculos.clases_a_mostrar(base[base["fondo"].isin(elegidos)], ver_todas))
 
 # ───────── Ejecutar eficiencia (se apaga si cambia cualquier filtro) ─────────
-firma = (moneda, tuple(tipos), tuple(rubros), tuple(elegidos), ver_todas)
+firma = (st.session_state["gestion_situacion"], moneda, tuple(tipos), tuple(rubros), tuple(elegidos), ver_todas)
 if st.session_state.get("eficiencia_firma") != firma:
     st.session_state["eficiencia_firma"] = firma
     st.session_state["eficiencia_activa"] = False

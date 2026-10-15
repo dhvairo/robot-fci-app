@@ -8,19 +8,23 @@ recarga.al_dia()          # si la app se publicó mientras estaba abierta, se le
 import acceso  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
+import filtros  # noqa: E402
 
 st.set_page_config(page_title="Buscador de instrumentos", page_icon="📈", layout="wide")
 acceso.requerir()
 st.title("Buscador de instrumentos")
-st.caption("Busca en la última cartera semanal de cada fondo seguido. Ejemplos: YPF, Pampa, Boncer, Megabono, Cheque.")
+st.caption("Busca en la última cartera semanal disponible de los fondos seleccionados. Ejemplos: YPF, Pampa, Boncer, Megabono, Cheque.")
 
+catalogo = filtros.situacion(datos.fondos_ficha(incluir_no_seguidos=True), "buscador_situacion", "Seguidos")
+st.caption("Los fondos sin cartera disponible no aportan resultados a la búsqueda.")
 texto = st.text_input("Instrumento (parte del nombre)", placeholder="YPF")
 if len(texto.strip()) < 2:
     st.info("Escribí al menos 2 letras.")
     st.stop()
 r = datos.buscar_instrumentos(texto.strip())
+r = r[r.fondo.isin(catalogo.nombre)]
 if r.empty:
-    st.warning("No se encontró en las carteras de los fondos seguidos.")
+    st.warning("No se encontró en las carteras disponibles de los fondos seleccionados.")
     st.stop()
 
 c1, c2, c3 = st.columns(3)

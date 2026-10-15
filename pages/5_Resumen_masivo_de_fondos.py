@@ -1,4 +1,4 @@
-"""Resumen masivo de fondos: la tabla de la solapa "Resumen" del Excel de carteras y el informe (pantalla y PDF)."""
+"""Informe descriptivo de fondos: la tabla de la solapa "Resumen" del Excel de carteras y el informe (pantalla y PDF)."""
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -10,31 +10,41 @@ import acceso  # noqa: E402
 import calculos  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
+import filtros  # noqa: E402
 import informe  # noqa: E402
 import marca  # noqa: E402
 
-st.set_page_config(page_title="Resumen masivo de fondos", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Informe descriptivo de fondos", page_icon="📈", layout="wide")
 acceso.requerir()
-st.title("Resumen masivo de fondos")
-st.caption("Composición de la última cartera de los fondos que sigue el robot (fuente: CNV). "
-           "Los fondos que se siguen se suman o se quitan con pedidos (la pantalla para pedirlos está en preparación).")
-
-transferencia = st.session_state.pop(calculos.SELECCION_INFORME, None)
-if transferencia is not None:
-    st.session_state["informe_catalogo_completo"] = True
-todos = datos.fondos_ficha(incluir_no_seguidos=st.session_state.get("informe_catalogo_completo", False))
+st.title("Informe descriptivo de fondos")
+st.caption("Composición de la última cartera disponible de los fondos seleccionados (fuente: CNV).")
+st.button("Restablecer", on_click=filtros.restablecer_informe, args=(st.session_state,))
+transferencia = st.session_state.get(calculos.SELECCION_INFORME, [])
+# Un nuevo pase abre el modo comparados; las siguientes corridas conservan los controles propios.
+if transferencia and st.session_state.get("informe_transferencia") != transferencia:
+    filtros.restablecer_informe(st.session_state)
+    st.session_state["informe_transferencia"] = list(transferencia)
+    st.session_state["informe_modo"] = "Tomar fondos comparados"
+    st.session_state["informe_filtro_0"] = "Todos"
+modo = st.radio("Origen de los fondos", ["Tomar fondos comparados", "Búsqueda libre"],
+                index=1, key="informe_modo")
+todos = datos.fondos_ficha(incluir_no_seguidos=True)
+if modo == "Tomar fondos comparados":
+    if not transferencia:
+        st.info("No hay selección del Comparador. Elegí fondos allí o usá Búsqueda libre.")
+        st.stop()
+    todos = todos[todos.codigo_cnv.isin(transferencia)]
 if todos.empty:
-    st.info("No hay fondos seguidos.")
+    st.info("No hay fondos disponibles para este modo.")
     st.stop()
-nombres = todos["nombre"].tolist()
-if transferencia is not None:
-    st.session_state["informe_fondos"] = todos.loc[todos.codigo_cnv.isin(transferencia), "nombre"].tolist()
-elegidos = st.multiselect("Fondos a incluir", nombres, default=nombres,
-                          key="informe_fondos", help="Elegí los fondos que quieras: uno, varios o todos.")
+base = filtros.mostrar(todos, clave="informe", moneda_todos="Todos")
+nombres = dict(zip(base.codigo_cnv, base.nombre))
+elegidos = filtros.casillas("Fondos a incluir", nombres, "informe_casillas_" + modo,
+                            formato=nombres.get, preferidas=nombres)
 if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()
-sel = todos[todos["nombre"].isin(elegidos)]
+sel = base[base.codigo_cnv.isin(elegidos)]
 carteras, sumas, tenencias = datos.resumen_carteras()
 sin_cartera = sorted(set(sel["nombre"]) - set(sel[sel["codigo_cnv"].isin(carteras["codigo_cnv"])]["nombre"]))
 if sin_cartera:

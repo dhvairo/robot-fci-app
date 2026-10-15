@@ -53,15 +53,34 @@ def opciones(fondos, nivel, anteriores=(), todas_monedas=True):
     return [TODOS[nivel], *sorted(base[CAMPOS[nivel]].dropna().unique())]
 
 
-def mostrar(fondos, clave="ficha", todas_monedas=True):
+def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas"):
     import streamlit as st
     elegidas = []
     for nivel, (col, etiqueta) in enumerate(zip(st.columns(4), ("Fondos", "Moneda", "Rubro", "Categoría"))):
         valores = opciones(fondos, nivel, elegidas, todas_monedas)
         if not valores:
             return fondos.iloc[:0]
+        if nivel == 1:
+            valores = [moneda_todos if v == "Todas" else v for v in valores]
         llave = f"{clave}_filtro_{nivel}"
         if st.session_state.get(llave) not in valores:
             st.session_state[llave] = valores[0]
-        elegidas.append(col.selectbox(etiqueta, valores, key=llave))
+        valor = col.selectbox(etiqueta, valores, key=llave)
+        elegidas.append("Todas" if nivel == 1 and valor == moneda_todos else valor)
     return aplicar(fondos, *elegidas)
+
+
+def restablecer_informe(sesion):
+    """Limpia solo controles propios; conserva el pase temporal del Comparador."""
+    for llave in list(sesion):
+        if llave.startswith("informe_") and llave != calculos.SELECCION_INFORME:
+            del sesion[llave]
+    sesion["informe_modo"] = "Búsqueda libre"
+    sesion["informe_transferencia"] = list(sesion.get(calculos.SELECCION_INFORME, []))
+
+
+def situacion(fondos, clave, defecto="Todos"):
+    import streamlit as st
+    opciones = ["Seguidos", "No seguidos", "Todos"]
+    valor = st.selectbox("Fondos", opciones, index=opciones.index(defecto), key=clave)
+    return aplicar(fondos, situacion=valor)
