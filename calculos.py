@@ -400,6 +400,16 @@ def filtrar_catalogo(df, texto="", moneda="Todas", tipos=(), rubros=(), situacio
     return out.sort_values("nombre", kind="stable")
 
 
+def codigo_fila_catalogo(codigos, filas):
+    """Las posiciones de Streamlit corresponden al orden enviado, incluso al ordenar en el navegador."""
+    if len(filas) != 1:
+        return None
+    posicion = filas[0]
+    if not isinstance(posicion, int) or isinstance(posicion, bool) or not 0 <= posicion < len(codigos):
+        return None
+    return codigos[posicion]
+
+
 def validar_pedido(accion, descripcion=None, idea=None, id_ficha=None):
     """Limpia y controla lo que se escribió en la pantalla. Devuelve (datos, error): `datos` = {'accion', 'descripcion',
     'idea', 'id_ficha'} (los vacíos quedan en None) y `error` = texto para mostrar, o None si está todo bien."""

@@ -1,6 +1,7 @@
 """Sumar o quitar fondos: pedirle al robot que siga (o deje de seguir) un fondo del catálogo, y corregir su descripción y
 temática. La app solo ANOTA el pedido; el robot lo atiende en su próxima corrida y acá se ve su estado."""
 from datetime import datetime
+from inspect import signature
 
 import streamlit as st
 
@@ -74,11 +75,25 @@ rubros = c5.multiselect("Rubro", sorted(catalogo["rubro"].dropna().unique()), pl
                         help="Rubro del fondo: por cartera (fondos seguidos) o igual al tipo de fondo. Sin elegir ninguno: todos.",
                         key="pedidos_rubros")
 encontrados = calculos.filtrar_catalogo(catalogo, texto, moneda, tipos, rubros, situacion)
+LIMITE = 300
+mostrados = encontrados.head(LIMITE)
+codigos = tuple(mostrados["codigo_cnv"])
+# Cada orden visible tiene su propio evento: nunca reinterpretar una posición vieja.
+if st.session_state.get("pedidos_codigos") != codigos or desde_ficha is not None:
+    st.session_state["pedidos_codigos"] = codigos
+    st.session_state["pedidos_revision"] = st.session_state.get("pedidos_revision", 0) + 1
+if st.session_state.get("fondo_elegido") not in codigos:
+    st.session_state["fondo_elegido"] = None
+
+
+def seleccionar_fila(clave, codigos):
+    filas = st.session_state[clave]["selection"]["rows"]
+    st.session_state["fondo_elegido"] = calculos.codigo_fila_catalogo(codigos, filas)
+
+
 if encontrados.empty:
     st.info("Ningún fondo cumple esa búsqueda.")
 else:
-    LIMITE = 300
-    mostrados = encontrados.head(LIMITE)
     st.caption((f"{len(encontrados):,} fondos encontrados" if len(encontrados) != 1 else "1 fondo encontrado").replace(",", ".")
                + (f" (se muestran los primeros {LIMITE}: afiná la búsqueda para ver el resto)." if len(encontrados) > LIMITE else "."))
     tabla = mostrados.assign(moneda_texto=mostrados["moneda"].map(calculos.NOMBRE_MONEDA).fillna(mostrados["moneda"]))
@@ -87,13 +102,28 @@ else:
         "rubro": "Rubro", "seguido": "¿Se sigue?"})
     for columna in ("Gerente", "Tipo de fondo", "Rubro"):
         tabla[columna] = tabla[columna].map(formato.texto_o_guion)
-    st.dataframe(formato.tabla(tabla, booleanos=["¿Se sigue?"]), hide_index=True, width="stretch", height=260)
+    clave = f"pedidos_resultados_{st.session_state['pedidos_revision']}"
+    codigo = st.session_state.get("fondo_elegido")
+    opciones = {}
+    if "selection_default" in signature(st.dataframe).parameters:
+        opciones["selection_default"] = {"selection": {"rows": [codigos.index(codigo)] if codigo is not None else []}}
+    estilo = formato.tabla(tabla, booleanos=["¿Se sigue?"])
+    if codigo is not None:
+        # También señala la llegada desde Ficha en versiones sin selection_default.
+        estilo = estilo.style.set_properties(subset=(tabla.index[[codigos.index(codigo)]], slice(None)),
+                                       **{"font-weight": "bold"})
+    st.dataframe(estilo, hide_index=True, width="stretch", height=260, key=clave,
+                 on_select=lambda: seleccionar_fila(clave, codigos), selection_mode="single-row", **opciones)
 
     # ───────── El fondo elegido ─────────
     por_codigo = mostrados.set_index("codigo_cnv")
-    codigo = st.selectbox("Fondo elegido", list(por_codigo.index), key="fondo_elegido",
-                          format_func=lambda c: f"{por_codigo.loc[c, 'nombre']} — {por_codigo.loc[c, 'gerente'] or 'sin gerente'}"
-                                                f"{' (se sigue)' if por_codigo.loc[c, 'seguido'] else ''}")
+    st.text_input("Fondo elegido", value=(f"{por_codigo.loc[codigo, 'nombre']} — "
+                  f"{por_codigo.loc[codigo, 'gerente'] or 'sin gerente'}" if codigo is not None else ""), disabled=True)
+    if codigo is None:
+        st.info("Seleccioná una fila de los resultados para ver sus acciones.")
+
+if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
+    codigo = st.session_state["fondo_elegido"]
     f = por_codigo.loc[codigo]
     st.subheader(f["nombre"])
     st.caption(f"{f['gerente'] or '—'} · {calculos.NOMBRE_MONEDA.get(f['moneda'], f['moneda'])} · "
