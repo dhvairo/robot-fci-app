@@ -1,0 +1,20 @@
+{
+  "desde": "2026-01-01",
+  "hasta": "2026-12-31",
+  "contrastado_el": "2026-10-15",
+  "fuente": "https://www.bcra.gob.ar/consulta-feriados-bancarios/",
+  "comunicaciones": [
+    "https://www.bcra.gob.ar/archivos/Pdfs/comytexord/C101352.pdf",
+    "https://www.bcra.gob.ar/archivos/Pdfs/comytexord/C102390.pdf",
+    "https://www.bcra.gob.ar/archivos/Pdfs/comytexord/A8487.pdf"
+  ],
+  "criterio": "Cierres generales de entidades financieras del listado BCRA, incluidos días no laborables turísticos; no calendarios religiosos personales.",
+  "actualizacion": "Antes del nuevo año y ante cambios del BCRA: contrastar listado y comunicaciones oficiales, reemplazar fechas y cobertura solo por años completos verificados, actualizar procedencia y pruebas, ejecutar verificar.bat y publicar el recurso junto con estado.py. Sin consultas de red desde la app.",
+  "feriados": [
+    "2026-01-01", "2026-02-16", "2026-02-17", "2026-03-23",
+    "2026-03-24", "2026-04-02", "2026-04-03", "2026-05-01",
+    "2026-05-25", "2026-06-15", "2026-07-09", "2026-07-10",
+    "2026-08-17", "2026-10-12", "2026-11-09", "2026-11-10",
+    "2026-11-23", "2026-12-07", "2026-12-08", "2026-12-25"
+  ]
+}
