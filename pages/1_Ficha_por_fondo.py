@@ -14,6 +14,90 @@ import filtros  # noqa: E402
 import informe  # noqa: E402
 import consulta_puntual  # noqa: E402
 import pandas as pd
+from copy import deepcopy
+
+ETIQUETAS = dict(zip(calculos.CAMPOS_CLASIFICACION, ('Rubro', 'Categoría', 'Moneda', 'Indexación')))
+
+
+def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
+    persona = acceso.usuario() or {}
+    motivo = ''
+    try:
+        acceso.requerir_admin_clasificacion()
+    except acceso.ErrorAcceso:
+        motivo = 'función administrador'
+        st.caption(motivo)
+    if not vista or vista['estado'] != 'habilitado':
+        motivo = (vista or {}).get('mensaje', 'La clasificación por organización no está disponible.')
+    filas = [f for f in (vista or {}).get('filas', []) if f['codigo_cnv'] == codigo]
+    por_orden = {f['orden']: f for f in filas}
+    # El índice de tabla solo presenta; la elección guarda el UUID y snapshot completos.
+    tabla = cart.drop(columns=['orden']).copy()
+    tabla = tabla[[c for c in ('rubro_cnv', 'instrumento', 'pct_pn',
+                              *calculos.CAMPOS_CLASIFICACION, 'sin_clasificar') if c in tabla]]
+    tabla = tabla.rename(columns={'rubro_cnv': 'Rubro CNV', 'instrumento': 'Instrumento',
+                                  'pct_pn': '% del PN', 'sin_clasificar': 'Sin clasificar', **ETIQUETAS})
+    tabla['Fecha'] = formato.fecha(fecha)
+    tabla['Procedencia'] = [por_orden.get(o, {}).get('procedencia', 'fuente') for o in cart.orden]
+    tabla['Motivo'] = [motivo or por_orden.get(o, {}).get('bloqueo') or '' for o in cart.orden]
+    for campo in calculos.CAMPOS_CLASIFICACION:
+        tabla[f'{ETIQUETAS[campo]} original'] = [por_orden.get(o, {}).get(campo) for o in cart.orden]
+    tabla = formato.tabla(tabla, numeros={'% del PN': 2}, booleanos=['Sin clasificar'])
+    tabla.insert(0, 'Editar', False)
+    clave = f"ficha_edicion_{persona.get('id')}_{persona.get('organizacion')}_{codigo}_{fecha}"
+    tabla_clave = clave + '_tabla' + str(tuple(
+        (o, por_orden.get(o, {}).get('identidad', {}).get('instrumento_id')) for o in cart.orden))
+    st.caption('ítems clasificados por administrador · procedencia organización; los demás conservan la fuente.')
+    if motivo:
+        st.caption(motivo)
+    editada = st.data_editor(tabla, hide_index=True, width='stretch',
+                            disabled=True if motivo else [c for c in tabla if c != 'Editar'],
+                            key=tabla_clave)
+    elegidas = [por_orden.get(o) for o, elegido in zip(cart.orden, editada['Editar']) if elegido]
+    if len(elegidas) > 1:
+        st.warning('Elegí una sola fila para editar.')
+        return
+    fila = elegidas[0] if elegidas else None
+    if fila is None:
+        st.session_state.pop(clave, None)
+        return
+    if fila['bloqueo']:
+        motivo = fila['bloqueo']
+        st.caption(motivo)
+    # No renovar versiones durante la edición: una escritura concurrente debe dar conflicto.
+    anterior = st.session_state.get(clave)
+    if anterior is None or anterior['identidad'] != fila['identidad']:
+        st.session_state[clave] = deepcopy(fila)
+    original = st.session_state[clave]
+    opciones = (vista or {}).get('opciones', ())
+    prefijo, valores = (), {}
+    for i, campo in enumerate(calculos.CAMPOS_CLASIFICACION):
+        disponibles = list(dict.fromkeys(t[i] for t in opciones if t[:i] == prefijo))
+        actual = original['efectiva'].get(campo)
+        valor = st.selectbox(ETIQUETAS[campo], disponibles,
+                             index=disponibles.index(actual) if actual in disponibles else 0 if disponibles else None,
+                             format_func=lambda x: 'Sin dato' if x is None else x,
+                             disabled=bool(motivo) or not disponibles,
+                             key=clave + str(original['identidad']['instrumento_id']) + str(i) + str(prefijo))
+        valores[campo] = valor
+        prefijo += (valor,)
+    if st.button('Cancelar', key=clave + '_cancelar'):
+        st.session_state.pop(clave, None)
+        st.session_state.pop(tabla_clave, None)
+        st.rerun()
+    if st.button('Guardar', disabled=bool(motivo) or not opciones, key=clave + '_guardar'):
+        try:
+            resultado = datos.guardar_edicion_ficha(original, valores, opciones)
+        except (acceso.ErrorAcceso, calculos.ErrorClasificacion) as error:
+            st.error(str(error))
+            return
+        if resultado['estado'] in ('guardado', 'sin_cambios'):
+            st.session_state.pop(clave, None)
+            st.session_state.pop(tabla_clave, None)
+            st.rerun()  # Recompone fuente cacheada y privadas con Auth de esta sesión.
+        else:
+            st.warning(resultado.get('mensaje', 'No se guardó la clasificación.'))
+
 
 # Colores de la torta; cada uno tiene su cuadradito de color para el botón del mismo rubro.
 PALETA = [("🔴", "#E04B4B"), ("🟠", "#F28E2B"), ("🟡", "#EDC948"), ("🟢", "#59A14F"), ("🔵", "#4E79A7"),
@@ -212,11 +296,9 @@ else:
         numeros={"% del PN": 2})
     st.dataframe(top_pdf, hide_index=True, width="stretch")
     with st.expander("Cartera completa"):
-        st.dataframe(formato.tabla(calculos.filtrar_por_rubros(cart, elegidos).drop(columns=["orden"]).rename(columns={
-            "rubro_cnv": "Rubro CNV", "instrumento": "Instrumento", "pct_pn": "% del PN",
-            "categoria_resumen": "Rubro", "categoria_detallada": "Categoría", "moneda": "Moneda",
-            "indexacion": "Indexación", "sin_clasificar": "Sin clasificar"}),
-            numeros={"% del PN": 2}, booleanos=["Sin clasificar"]), hide_index=True, width="stretch")
+        mostrar_edicion_clasificacion(
+            calculos.filtrar_por_rubros(cart, elegidos),
+            puntual.get('clasificacion') if puntual is not None else vista, codigo, e['fecha_cartera'])
 
 # ───────── Hechos relevantes ─────────
 st.subheader("Hechos relevantes")

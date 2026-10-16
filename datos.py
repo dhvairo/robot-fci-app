@@ -280,6 +280,21 @@ def guardar_clasificacion(instrumento_id, parche, version_regla, version_fuente)
     return _escribir_clasificacion(instrumento_id, "guardar", parche, version_regla, version_fuente)
 
 
+def guardar_edicion_ficha(fila, valores, opciones, cancelar=False):
+    """Snapshot servidor conservado al abrir; SQL valida identidad/opciones/versiones otra vez.
+
+    Nunca recibe organización, dueño ni autor. Sin cambios/cancelación no abre conexión.
+    """
+    if cancelar:
+        return {'estado': 'cancelado'}
+    _contexto_clasificacion(escritura=True)
+    parche = calculos.parche_edicion_ficha(fila, valores, opciones)
+    if parche is None:
+        return {'estado': 'sin_cambios'}
+    return guardar_clasificacion(fila['identidad']['instrumento_id'], parche,
+                                 fila['revision'] or 0, fila['version_fuente'])
+
+
 def resolver_fuente(instrumento_id, accion, version_regla, version_fuente):
     return _escribir_clasificacion(instrumento_id, accion, None, version_regla, version_fuente)
 

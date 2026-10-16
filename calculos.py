@@ -217,6 +217,7 @@ def componer_carteras(filas_fuente, snapshot, contexto):
         salida = {**deepcopy(fila), 'efectiva': efectiva, 'identidad': identidad,
                   'bloqueo': bloqueo, 'procedencia': 'organizacion' if regla else 'fuente',
                   'revision': regla.get('version') if regla else None,
+                  'parche': deepcopy(regla['parche']) if regla else {},
                   'version_fuente': registro['version_fuente'] if registro else None,
                   'pendiente': pendiente}
         filas.append(salida)
@@ -243,7 +244,18 @@ def componer_carteras(filas_fuente, snapshot, contexto):
                              pendientes=sum(f['pendiente'] is not None for f in cartera),
                              bloqueados=sum(f['bloqueo'] is not None for f in cartera)))
     return dict(estado='habilitado', filas=filas, resumenes=resumenes,
-                pendientes=len(pendientes))
+                pendientes=len(pendientes), opciones=opciones)
+
+
+def parche_edicion_ficha(fila, valores, opciones):
+    """Cambio parcial sobre la efectiva; conserva las excepciones ya existentes."""
+    if (fila.get('bloqueo') or not fila.get('identidad', {}).get('instrumento_id')
+            or fila['identidad'].get('estado') != 'inequivoco'):
+        raise ErrorClasificacion('IDENTIDAD_BLOQUEADA')
+    final = validar_edicion(fila['efectiva'], valores, opciones)
+    cambios = {k: final[k] for k in CAMPOS_CLASIFICACION
+               if final[k] != fila['efectiva'].get(k)}
+    return {**fila.get('parche', {}), **cambios} if cambios else None
 
 
 def filas_efectivas(filas):
