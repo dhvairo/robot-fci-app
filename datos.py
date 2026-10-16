@@ -1,5 +1,6 @@
 """Acceso a la base para la app: solo lectura, con resultados en caché por 10 minutos."""
 import os
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -77,6 +78,98 @@ def guardar_preferencia(persona, clave, valor):
               "values (%s,%s,%s,%s) on conflict (organizacion,dueno,clave) "
               "do update set valor=excluded.valor, actualizada=now() returning clave",
               (persona["organizacion"], persona["id"], clave, Jsonb(valor)))
+
+
+CLASIFICACION_DESHABILITADA = "La clasificación por organización no está disponible."
+
+
+def _contexto_clasificacion(persona=None, escritura=False):
+    """Auth central revalidado; ninguna identidad procede de parámetros SQL del cliente."""
+    import acceso
+    if escritura:
+        return acceso.requerir_admin_clasificacion()
+    anterior = dict(acceso.usuario() or {})
+    actual = acceso._validar_sesion()
+    if (persona != actual or anterior.get("id") != actual.get("id")
+            or anterior.get("organizacion") != actual.get("organizacion")
+            or actual.get("cambio_obligatorio") or not actual.get("version_clave")
+            or actual.get("rol") not in ("admin", "asesor")
+            or actual.get("organizacion") != "propia"):
+        raise acceso.ErrorAcceso("Usuario sin acceso autorizado.")
+    return {"organizacion": actual["organizacion"], "dueno": "equipo",
+            "usuario": actual["id"], "rol": actual["rol"]}
+
+
+def _clasificacion_transaccion(contexto, operacion):
+    """Conexión propia, sin caché; commit al salir o rollback antes de informar fallo."""
+    try:
+        with psycopg.connect(_url(), connect_timeout=20) as conn:
+            conn.execute("select set_config('app.organizacion', %s, true), "
+                         "set_config('app.dueno_colectivo', %s, true), "
+                         "set_config('app.usuario', %s, true), "
+                         "set_config('app.rol', %s, true)",
+                         tuple(contexto[k] for k in ("organizacion", "dueno", "usuario", "rol")))
+            resultado = operacion(conn)
+        return resultado
+    except Exception as error:
+        if getattr(error, "sqlstate", None) in ("42P01", "42883", "3F000", "42501"):
+            return {"estado": "deshabilitado", "mensaje": CLASIFICACION_DESHABILITADA}
+        if getattr(error, "sqlstate", None) == "40001":
+            return {"estado": "conflicto", "mensaje": "La clasificación cambió; recargá antes de guardar."}
+        if isinstance(error, calculos.ErrorClasificacion):
+            raise
+        raise calculos.ErrorClasificacion("No se pudo acceder a la clasificación.") from None
+
+
+def leer_clasificaciones(persona, ids):
+    """Snapshot privado compartido por la organización; consultar jamás reconoce decisiones."""
+    from uuid import UUID
+    contexto = _contexto_clasificacion(persona)
+    identificadores = [str(UUID(str(i))) for i in ids]
+
+    def leer(conn):
+        resultado = conn.execute("select public.clasificacion_leer(%s::uuid[])",
+                                 (identificadores,)).fetchone()[0]
+        claves = {f["instrumento_id"]: json.dumps(f["componentes"], ensure_ascii=False,
+                  separators=(",", ":")) for f in resultado["fuentes"]}
+        for regla in resultado["reglas"]:
+            regla["instrumento"] = claves[regla["instrumento_id"]]
+        resultado["decisiones"] = {
+            (contexto["organizacion"], contexto["dueno"], claves[d["instrumento_id"]],
+             tuple(d["huella"][:4])): d["accion"] for d in resultado["decisiones"]}
+        return resultado
+    return _clasificacion_transaccion(contexto, leer)
+
+
+def _escribir_clasificacion(instrumento_id, accion, parche, version_regla, version_fuente):
+    from uuid import UUID
+    from psycopg.types.json import Jsonb
+    contexto = _contexto_clasificacion(escritura=True)
+    identificador = str(UUID(str(instrumento_id)))
+    if (type(version_regla) is not int or version_regla < 0
+            or type(version_fuente) is not int or version_fuente < 1):
+        raise calculos.ErrorClasificacion("VERSION_INVALIDA")
+    if accion == "guardar":
+        # El contrato puro valida forma; SQL vuelve a validar opciones dentro del bloqueo.
+        calculos._aplicar_parche({}, parche)
+    elif accion not in ("aceptar", "conservar"):
+        raise calculos.ErrorClasificacion("ACCION_INVALIDA")
+
+    def escribir(conn):
+        if accion == "guardar":
+            return conn.execute("select public.clasificacion_guardar(%s::uuid, %s::jsonb, %s, %s)",
+                                (identificador, Jsonb(parche), version_regla, version_fuente)).fetchone()[0]
+        return conn.execute("select public.clasificacion_resolver(%s::uuid, %s, %s, %s)",
+                            (identificador, accion, version_regla, version_fuente)).fetchone()[0]
+    return _clasificacion_transaccion(contexto, escribir)
+
+
+def guardar_clasificacion(instrumento_id, parche, version_regla, version_fuente):
+    return _escribir_clasificacion(instrumento_id, "guardar", parche, version_regla, version_fuente)
+
+
+def resolver_fuente(instrumento_id, accion, version_regla, version_fuente):
+    return _escribir_clasificacion(instrumento_id, accion, None, version_regla, version_fuente)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
