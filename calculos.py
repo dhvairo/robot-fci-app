@@ -41,11 +41,35 @@ def historia_comparador(fondos, clases, leer_serie, cargar_puntual):
     return serie.merge(clases[["codigo_cafci", "etiqueta", "moneda"]], on="codigo_cafci"), avisos
 
 
-def comparar(serie, desde, hasta, modo):
+def controles_series(sesion, clases):
+    """Identidad CAFCI y memoria independiente de widgets, período y modo."""
+    import marca
+    memoria = sesion.setdefault("comparador_series", {})
+    paleta = marca.paleta()
+    for codigo in sorted(set(int(c) for c in clases.codigo_cafci)):
+        if codigo not in memoria:
+            memoria[codigo] = {"color": paleta[len(memoria) % len(paleta)], "visible": True}
+    return [{"codigo": int(c.codigo_cafci),
+             "nombre": f"{c.etiqueta} · {c.moneda} · CAFCI {c.codigo_cafci}",
+             **memoria[int(c.codigo_cafci)]} for c in clases.itertuples()]
+
+
+def alternar_serie(sesion, codigo):
+    estado = sesion["comparador_series"][codigo]
+    estado["visible"] = not estado["visible"]
+
+
+def comparar(serie, desde, hasta, modo, controles=None):
     """Datos comunes a pantalla y PDF: R base 100, P en moneda de cada clase."""
     import plotly.express as px
     import marca
     serie = base_100(serie, desde, hasta)
+    trazos = serie
+    colores = None
+    if controles is not None:
+        nombres = {c["codigo"]: c["nombre"] for c in controles}
+        trazos = serie.assign(etiqueta=serie.codigo_cafci.map(nombres))
+        colores = {c["nombre"]: c["color"] for c in controles}
     especificaciones = []
     if modo in ("R", "R y P"):
         especificaciones.append(("base 100", "Rendimiento (base 100)"))
@@ -53,10 +77,16 @@ def comparar(serie, desde, hasta, modo):
         especificaciones.append(("patrimonio", "Patrimonio (moneda de cada clase)"))
     graficos = []
     for campo, titulo in especificaciones:
-        fig = px.line(serie, x="fecha", y=campo, color="etiqueta", title=titulo,
+        fig = px.line(trazos, x="fecha", y=campo, color="etiqueta", title=titulo,
+                      color_discrete_map=colores,
                       color_discrete_sequence=marca.paleta(),
                       facet_row="moneda" if campo == "patrimonio" else None)
         fig.update_traces(connectgaps=False)
+        if controles is not None:
+            visibles = {c["nombre"]: c["visible"] for c in controles}
+            for trazo in fig.data:
+                trazo.visible = visibles[trazo.legendgroup]
+            fig.update_layout(showlegend=False)
         if campo == "patrimonio":
             fig.update_yaxes(matches=None)
         fig.update_xaxes(range=[desde, hasta])

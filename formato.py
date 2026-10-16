@@ -9,6 +9,15 @@ ARGENTINA = timezone(timedelta(hours=-3))
 VACIO = "—"
 
 
+def estilo_boton_serie(codigo, color, visible):
+    """CSS limitado al botón CAFCI; el color proviene de la paleta de marca."""
+    return (f"<style>.st-key-comparador_serie_{int(codigo)} button {{"
+            f"border: 2px solid {color}; color: {color};"
+            f"opacity: {1 if visible else 0.5};"
+            f"text-decoration: {'none' if visible else 'line-through'};"
+            "}</style>")
+
+
 def _es_nulo(x):
     return x is None or x != x  # None, NaN y NaT (NaN y NaT no son iguales a sí mismos)
 

@@ -89,6 +89,14 @@ if (~fondos.seguido).any():
 graficos = []
 serie_pdf = ser
 mostrar = sel[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "moneda": "Moneda"})
+controles = calculos.controles_series(st.session_state, sel)
+st.caption("Series del gráfico: tocá un botón para ocultar o mostrar su línea.")
+for control in controles:
+    st.markdown(formato.estilo_boton_serie(control["codigo"], control["color"], control["visible"]),
+                unsafe_allow_html=True)
+    st.button(control["nombre"], key=f"comparador_serie_{control['codigo']}",
+              help="Encendida" if control["visible"] else "Apagada",
+              on_click=calculos.alternar_serie, args=(st.session_state, control["codigo"]))
 if ser.empty:
     notas.append("Sin historia disponible para esta selección.")
 else:
@@ -108,7 +116,7 @@ else:
         desde = primero if periodos[per] is None else max(primero, ultimo - timedelta(days=periodos[per]))
         hasta = ultimo
     st.caption(f"Desde {formato.fecha(desde)} hasta {formato.fecha(hasta)}")
-    serie_pdf, resumen, graficos = calculos.comparar(ser, desde, hasta, modo)
+    serie_pdf, resumen, graficos = calculos.comparar(ser, desde, hasta, modo, controles)
     mostrar = mostrar.merge(resumen, on=["Clase", "Moneda"], how="left")
     for fig in graficos:
         st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
