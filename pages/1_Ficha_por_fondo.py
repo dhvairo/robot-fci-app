@@ -24,16 +24,29 @@ st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide"
 acceso.requerir()
 st.title("Ficha por fondo")
 
+st.button("Restablecer", on_click=filtros.restablecer_ficha, args=(st.session_state,))
+
 todos = datos.fondos_ficha(incluir_no_seguidos=True)
 if todos.empty:
+    st.session_state["ficha_fondo"] = None
     st.info("No hay fondos en el catálogo.")
     st.stop()
 filtrados = filtros.mostrar(todos)
+busqueda = st.text_input("Buscar por denominación", key="ficha_busqueda")
+filtrados = filtros.buscar_denominacion(filtrados, busqueda)
+codigos = filtrados["codigo_cnv"].tolist()
+if st.session_state.get("ficha_fondo") not in codigos:
+    st.session_state["ficha_fondo"] = None
 if filtrados.empty:
-    st.info("No hay fondos para estos filtros.")
+    st.info("No hay fondos para estos filtros y búsqueda.")
     st.stop()
-codigo = st.selectbox("Fondo", filtrados["codigo_cnv"].tolist(),
-                      format_func=lambda c: filtrados.set_index("codigo_cnv").loc[c, "nombre"])
+nombres = filtrados.set_index("codigo_cnv")["nombre"]
+codigo = st.selectbox("Fondo", codigos, index=None, key="ficha_fondo",
+                      placeholder="Elegí un fondo",
+                      format_func=lambda c: f"{nombres.loc[c]} · CNV {c}")
+if codigo is None:
+    st.info("Elegí un fondo para ver su ficha.")
+    st.stop()
 fondo = filtrados[filtrados["codigo_cnv"] == codigo].iloc[0]
 nombre = fondo["nombre"]
 codigo = int(fondo["codigo_cnv"])

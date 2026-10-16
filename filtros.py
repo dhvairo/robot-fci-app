@@ -124,3 +124,10 @@ def restablecer_comparador(sesion):
     for llave in list(sesion):
         if llave.startswith("comparador_"):
             del sesion[llave]
+
+
+def restablecer_ficha(sesion):
+    """Vuelve al inicio vacío de Ficha sin tocar otras pantallas ni sus consultas."""
+    for llave in list(sesion):
+        if llave.startswith("ficha_"):
+            del sesion[llave]
