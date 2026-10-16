@@ -96,6 +96,8 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
     tabla_clave = clave + '_tabla' + str(tuple(
         (o, por_orden.get(o, {}).get('identidad', {}).get('instrumento_id')) for o in cart.orden))
     st.caption('ítems clasificados por administrador · procedencia organización; los demás conservan la fuente.')
+    st.caption('La fuente común combina datos de CNV y reglas comunes. '
+               'La observación inicial no reconstruye clasificaciones históricas.')
     if motivo:
         st.caption(motivo)
     editada = st.data_editor(tabla, hide_index=True, width='stretch',

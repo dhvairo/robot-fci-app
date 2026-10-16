@@ -205,6 +205,8 @@ def componer_carteras(filas_fuente, snapshot, contexto):
         bloqueo = None
         if clave is None:
             bloqueo = 'IDENTIDAD_INCOMPLETA'
+        elif cantidades[clave] > 1:
+            bloqueo = 'IDENTIDAD_AMBIGUA'
         elif not candidatos:
             bloqueo = 'IDENTIDAD_AUSENTE'
         elif cantidades[clave] > 1 or len(candidatos) != 1 or candidatos[0]['ambiguo']:
