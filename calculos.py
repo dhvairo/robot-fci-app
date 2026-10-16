@@ -834,6 +834,18 @@ def componer_seguimiento(catalogo, repositorio, resolver=None):
         raise ErrorSeguimiento("LECTURA_FALLIDA") from None
 
 
+def pedidos_seguimiento(repositorio, resolver=None):
+    """Pedidos de todos los autores del par autorizado, sin caché ni filtro personal."""
+    contexto = _contexto_seguimiento(resolver)
+    try:
+        estado = _filas_seguimiento(repositorio.leer(_par_seguimiento(contexto)), contexto)
+        return deepcopy(estado["pedidos"])
+    except ErrorSeguimiento:
+        raise
+    except Exception:
+        raise ErrorSeguimiento("LECTURA_FALLIDA") from None
+
+
 def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
     """Anota pendiente, nunca aplicado. transaccion(par, función) debe ser atómica.
 
@@ -846,8 +858,11 @@ def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
     if not isinstance(formulario, dict) or set(formulario) - permitidos:
         raise ErrorSeguimiento("FORMULARIO_INVALIDO")
     accion = formulario.get("accion")
-    if accion not in ("seguir", "dejar"):
+    if accion not in ("seguir", "dejar", "editar_tematica"):
         raise ErrorSeguimiento("ACCION_NO_HABILITADA")
+    campos = [k for k in ("descripcion", "idea") if k in formulario]
+    if accion == "editar_tematica" and (not campos or "id_ficha" in formulario):
+        raise ErrorSeguimiento("FORMULARIO_INVALIDO")
     codigo, version, clave = (formulario.get(k) for k in ("codigo_cnv", "version_esperada", "clave"))
     version_textos = formulario.get("version_textos_esperada")
     if (type(codigo) is not int or codigo <= 0
@@ -867,6 +882,8 @@ def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
                  "version_textos_esperada": version_textos,
                  "clave": clave, "usuario": contexto["usuario"],
                  "organizacion": contexto["organizacion"], "dueno": contexto["dueno"]}
+    if accion == "editar_tematica":
+        intencion["campos_textos"] = campos
 
     def anotar(estado):
         _filas_seguimiento(estado, contexto)
@@ -883,7 +900,8 @@ def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
             raise ErrorSeguimiento("VERSION_TEXTOS_VIEJA")
         if any(p["codigo_cnv"] == codigo and p["estado"] == "pendiente" for p in estado["pedidos"]):
             raise ErrorSeguimiento("YA_PENDIENTE")
-        pedido = {**intencion, "estado": "pendiente"}
+        pedido = {**intencion, "estado": "pendiente",
+                  "auditoria": [{"evento": "solicitado", **deepcopy(intencion)}]}
         estado["pedidos"].append(pedido)
         return deepcopy(pedido)
 
@@ -903,9 +921,13 @@ def confirmar_seguimiento_ficticio(estado, clave, preparado=False):
     """
     nuevo = deepcopy(estado)
     pedido = next((p for p in nuevo["pedidos"] if p["clave"] == clave), None)
-    if pedido is None or pedido["estado"] != "pendiente" or pedido["accion"] not in ("seguir", "dejar"):
+    if pedido is None or pedido["accion"] not in ("seguir", "dejar", "editar_tematica"):
         raise ErrorSeguimiento("PEDIDO_INVALIDO")
     _filas_seguimiento(nuevo, pedido)
+    if pedido["estado"] == "listo":
+        return nuevo
+    if pedido["estado"] != "pendiente":
+        raise ErrorSeguimiento("PEDIDO_INVALIDO")
     codigo = pedido["codigo_cnv"]
     eleccion = next((f for f in nuevo["elecciones"] if f["codigo_cnv"] == codigo), None)
     if (eleccion or {}).get("version", 0) != pedido["version_esperada"]:
@@ -915,19 +937,26 @@ def confirmar_seguimiento_ficticio(estado, clave, preparado=False):
         raise ErrorSeguimiento("VERSION_TEXTOS_VIEJA")
     if pedido["accion"] == "seguir" and preparado is not True:
         raise ErrorSeguimiento("PREPARACION_INCOMPLETA")
-    if eleccion is None:
-        eleccion = {k: pedido[k] for k in ("organizacion", "dueno", "codigo_cnv")}
-        nuevo["elecciones"].append(eleccion)
-    eleccion.update(seguido=pedido["accion"] == "seguir", version=pedido["version_esperada"] + 1,
-                    usuario=pedido["usuario"])
-    if pedido["accion"] == "seguir" and (pedido["descripcion"] or pedido["idea"]):
+    antes = deepcopy({"eleccion": eleccion, "textos": texto})
+    editar = pedido["accion"] == "editar_tematica"
+    if not editar:
+        if eleccion is None:
+            eleccion = {k: pedido[k] for k in ("organizacion", "dueno", "codigo_cnv")}
+            nuevo["elecciones"].append(eleccion)
+        eleccion.update(seguido=pedido["accion"] == "seguir", version=pedido["version_esperada"] + 1,
+                        usuario=pedido["usuario"])
+    if editar or (pedido["accion"] == "seguir" and (pedido["descripcion"] or pedido["idea"])):
         if texto is None:
             texto = {k: pedido[k] for k in ("organizacion", "dueno", "codigo_cnv")}
             nuevo["textos"].append(texto)
         for origen, destino in (("descripcion", "descripcion_breve"), ("idea", "tematica")):
-            if pedido[origen]:
+            if (editar and origen in pedido["campos_textos"]) or (not editar and pedido[origen]):
                 texto[destino] = pedido[origen]
         texto.update(version=texto.get("version", 0) + 1, usuario=pedido["usuario"])
+    pedido.setdefault("auditoria", []).append({
+        "evento": "confirmado_ficticio",
+        **{k: pedido[k] for k in ("organizacion", "dueno", "usuario", "clave", "accion", "codigo_cnv")},
+        "antes": antes, "despues": deepcopy({"eleccion": eleccion, "textos": texto})})
     pedido["estado"] = "listo"
     return nuevo
 
