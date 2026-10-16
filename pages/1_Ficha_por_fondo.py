@@ -27,6 +27,7 @@ st.title("Ficha por fondo")
 st.button("Restablecer", on_click=filtros.restablecer_ficha, args=(st.session_state,))
 
 todos = datos.fondos_ficha(incluir_no_seguidos=True)
+vista = todos.attrs.get('clasificacion')
 if todos.empty:
     st.session_state["ficha_fondo"] = None
     st.info("No hay fondos en el catálogo.")
@@ -60,6 +61,7 @@ if not seguido:
             puntual = consulta_puntual.cargar(fondo.to_dict(), cache,
                                              consulta_puntual.token_configurado(st.secrets))
     if puntual is not None:
+        puntual = consulta_puntual.efectiva(puntual, fondo.to_dict())
         st.info(consulta_puntual.LEYENDA)
         st.caption(f"Carga inicial: {formato.numero(puntual['segundos'])} segundos · disponible solo en esta sesión.")
         for aviso in puntual["avisos"]:
@@ -154,8 +156,8 @@ else:
 
 # ───────── Cartera ─────────
 st.subheader("Cartera semanal")
-enc = datos.cartera_encabezado(codigo) if seguido else pd.DataFrame()
-cart = datos.cartera(codigo) if seguido else pd.DataFrame()
+enc = datos.cartera_encabezado(codigo, vista) if seguido else pd.DataFrame()
+cart = datos.cartera(codigo, vista) if seguido else pd.DataFrame()
 if puntual is not None:
     enc, cart = puntual["encabezado"], puntual["cartera"]
 if not seguido and puntual is None:

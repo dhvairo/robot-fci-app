@@ -246,6 +246,46 @@ def componer_carteras(filas_fuente, snapshot, contexto):
                 pendientes=len(pendientes))
 
 
+def filas_efectivas(filas):
+    """Proyección para consumidores; originales y metadatos quedan en la vista U29."""
+    return pd.DataFrame([{**deepcopy(f), **deepcopy(f['efectiva'])} for f in filas])
+
+
+def catalogo_efectivo(comunes, vista):
+    salida = comunes.copy(deep=True)
+    if vista['estado'] == 'habilitado':
+        for r in vista['resumenes']:
+            mascara = salida.codigo_cnv.eq(r['codigo_cnv'])
+            salida.loc[mascara, 'rubro'] = r['rubro']
+            if 'categoria' in salida:
+                salida.loc[mascara, 'categoria'] = r['tenencias'][0][0] if r['tenencias'] else 'Sin cartera'
+    return salida
+
+
+def encabezado_efectivo(comun, vista, codigo):
+    salida = comun.copy(deep=True)
+    if vista['estado'] == 'habilitado' and not salida.empty:
+        for r in vista['resumenes']:
+            if r['codigo_cnv'] == codigo:
+                for campo in ('instrumentos', 'sin_clasificar', 'pct_sin_clasificar'):
+                    salida[campo] = r[campo]
+    return salida
+
+
+def resumenes_efectivos(cabeceras, vista):
+    codigos = set(cabeceras.codigo_cnv)
+    sumas, tenencias = [], []
+    for r in vista['resumenes']:
+        codigo = r['codigo_cnv']
+        if codigo not in codigos:
+            continue
+        sumas.extend((codigo, cat, pct) for cat, pct in r['sumas'].items())
+        tenencias.extend((codigo, i, det, pct) for i, (det, _, pct) in enumerate(r['tenencias'], 1))
+    return (cabeceras.copy(deep=True),
+            pd.DataFrame(sumas, columns=['codigo_cnv', 'categoria_resumen', 'pct']),
+            pd.DataFrame(tenencias, columns=['codigo_cnv', 'posicion', 'categoria_detallada', 'pct_pn']))
+
+
 # U12: lista de códigos CNV (int), de un solo uso, dentro de la sesión autenticada.
 SELECCION_INFORME = "informe_desde_comparador"
 

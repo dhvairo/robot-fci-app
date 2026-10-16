@@ -17,13 +17,14 @@ st.title("Gestión y eficiencia")
 st.caption("Todos los fondos del catálogo de la CAFCI. Los datos son los de la última planilla diaria; "
            "el rendimiento a 12 meses ya es neto de honorarios y gastos.")
 
-todas = datos.clases_gestion()
+catalogo_completo = datos.fondos_ficha(incluir_no_seguidos=True)
+todas = datos.clases_gestion(catalogo_completo.attrs.get('clasificacion'))
 if todas.empty:
     st.info("Todavía no hay datos de clases.")
     st.stop()
 
 # ───────── Filtros ─────────
-catalogo = filtros.situacion(datos.fondos_ficha(incluir_no_seguidos=True), "gestion_situacion")
+catalogo = filtros.situacion(catalogo_completo, "gestion_situacion")
 todas = todas[todas.codigo_cnv.isin(catalogo.codigo_cnv)]
 moneda = st.radio("Moneda", calculos.OPCIONES_MONEDA, horizontal=True,
                   index=0,

@@ -29,6 +29,7 @@ if transferencia and st.session_state.get("informe_transferencia") != transferen
 modo = st.radio("Origen de los fondos", ["Tomar fondos comparados", "Búsqueda libre"],
                 index=1, key="informe_modo")
 todos = datos.fondos_ficha(incluir_no_seguidos=True)
+vista = todos.attrs.get('clasificacion')
 if modo == "Tomar fondos comparados":
     if not transferencia:
         st.info("No hay selección del Comparador. Elegí fondos allí o usá Búsqueda libre.")
@@ -45,7 +46,7 @@ if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()
 sel = base[base.codigo_cnv.isin(elegidos)]
-carteras, sumas, tenencias = datos.resumen_carteras()
+carteras, sumas, tenencias = datos.resumen_carteras(vista)
 sin_cartera = sorted(set(sel["nombre"]) - set(sel[sel["codigo_cnv"].isin(carteras["codigo_cnv"])]["nombre"]))
 if sin_cartera:
     st.warning("Todavía no tienen cartera cargada y no se incluyen: " + ", ".join(sin_cartera) + ".")

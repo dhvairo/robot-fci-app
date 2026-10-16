@@ -114,8 +114,10 @@ def _clasificacion_transaccion(contexto, operacion, solo_lectura=False):
             resultado = operacion(conn)
         return resultado
     except Exception as error:
-        if getattr(error, "sqlstate", None) in ("42P01", "42883", "3F000", "42501"):
+        if getattr(error, "sqlstate", None) in ("42P01", "42883", "3F000"):
             return {"estado": "deshabilitado", "mensaje": CLASIFICACION_DESHABILITADA}
+        if getattr(error, "sqlstate", None) == "42501":
+            raise calculos.ErrorClasificacion("Acceso a la clasificación no autorizado.") from None
         if getattr(error, "sqlstate", None) == "40001":
             return {"estado": "conflicto", "mensaje": "La clasificación cambió; recargá antes de guardar."}
         if isinstance(error, calculos.ErrorClasificacion):
@@ -175,6 +177,82 @@ def componer_carteras_organizacion(filas_fuente):
     return _clasificacion_transaccion(contexto, leer, solo_lectura=True)
 
 
+def vista_carteras():
+    """Carga común compartida; composición privada nueva en cada ejecución autenticada.
+
+    Solo consultar tiene caché global. La vista se pasa entre consumidores de una
+    pantalla para que filtros, tablas y PDF usen exactamente el mismo snapshot.
+    """
+    fuente = consultar(
+        "select c.*, c.rubro_cnv as rubro_cnv_original, "
+        "c.instrumento as instrumento_original, h.moneda as moneda_del_fondo_original "
+        "from carteras_ultima c join carteras_fechas h "
+        "using (codigo_cnv, fecha_cartera) order by c.codigo_cnv, c.orden")
+    resultado = componer_carteras_organizacion(
+        fuente.astype(object).where(pd.notna(fuente), None).to_dict('records'))
+    if resultado['estado'] == 'deshabilitado':
+        st.caption(resultado['mensaje'])
+    elif any(f['bloqueo'] for f in resultado['filas']):
+        motivos = sorted({f['bloqueo'] for f in resultado['filas'] if f['bloqueo']})
+        st.caption('Se conserva la fuente por identidad: ' + ', '.join(motivos) + '.')
+    return resultado
+
+
+def fondos_ficha(incluir_no_seguidos=False):
+    comunes = _fondos_ficha_comunes(incluir_no_seguidos)
+    vista = vista_carteras()
+    salida = calculos.catalogo_efectivo(comunes, vista)
+    salida.attrs['clasificacion'] = vista
+    return salida
+
+
+def resumen_carteras(vista=None):
+    vista = vista_carteras() if vista is None else vista
+    comunes = _resumen_carteras_comun() if vista['estado'] != 'habilitado' else None
+    if comunes is not None:
+        return comunes
+    cabeceras = consultar(
+        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio from carteras_fechas x "
+        "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
+        "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
+    return calculos.resumenes_efectivos(cabeceras, vista)
+
+
+def clases_gestion(vista=None):
+    vista = vista_carteras() if vista is None else vista
+    return calculos.catalogo_efectivo(_clases_gestion_comunes(), vista)
+
+
+def cartera(codigo_cnv, vista=None):
+    vista = vista_carteras() if vista is None else vista
+    if vista['estado'] != 'habilitado':
+        return _cartera_comun(codigo_cnv)
+    columnas = ['orden', 'rubro_cnv', 'instrumento', 'pct_pn',
+                *calculos.CAMPOS_CLASIFICACION, 'sin_clasificar']
+    filas = [f for f in vista['filas'] if f['codigo_cnv'] == codigo_cnv]
+    return calculos.filas_efectivas(filas).reindex(columns=columnas)
+
+
+def cartera_encabezado(codigo_cnv, vista=None):
+    vista = vista_carteras() if vista is None else vista
+    return calculos.encabezado_efectivo(_cartera_encabezado_comun(codigo_cnv), vista, codigo_cnv)
+
+
+def buscar_instrumentos(texto):
+    vista = vista_carteras()
+    if vista['estado'] != 'habilitado':
+        return _buscar_instrumentos_comunes(texto)
+    filas = calculos.filas_efectivas(vista['filas'])
+    columnas = ['fondo', 'instrumento', 'pct_pn', 'categoria_resumen',
+                'categoria_detallada', 'moneda', 'fecha_cartera']
+    if filas.empty:
+        return pd.DataFrame(columns=columnas)
+    nombres = _fondos_ficha_comunes(True).set_index('codigo_cnv').nombre
+    filas['fondo'] = filas.codigo_cnv.map(nombres)
+    return filas[filas.instrumento.str.contains(texto, case=False, regex=False, na=False)].sort_values(
+        'pct_pn', ascending=False, na_position='last')[columnas]
+
+
 def _escribir_clasificacion(instrumento_id, accion, parche, version_regla, version_fuente):
     from uuid import UUID
     from psycopg.types.json import Jsonb
@@ -217,7 +295,7 @@ def fondos_seguidos():
                      "where seguido order by nombre")
 
 
-def fondos_ficha(incluir_no_seguidos=False):
+def _fondos_ficha_comunes(incluir_no_seguidos=False):
     """Cabecera y primera categoría de los seguidos; incluir_no_seguidos habilita todo el catálogo.
 
     patrimonio_neto = suma del patrimonio de sus clases con dato normal (sin marca de estado), en la moneda del fondo."""
@@ -240,7 +318,7 @@ def fondos_ficha(incluir_no_seguidos=False):
         + ("" if incluir_no_seguidos else "where f.seguido ") + "order by f.nombre")
 
 
-def resumen_carteras():
+def _resumen_carteras_comun():
     """Para el Resumen masivo: de la última cartera de cada fondo seguido, su fecha y patrimonio, la suma del % del
     PN por categoría resumen y sus 3 mayores tenencias. Devuelve (carteras, sumas, tenencias)."""
     carteras = consultar(
@@ -255,7 +333,7 @@ def resumen_carteras():
     return carteras, sumas, tenencias
 
 
-def clases_gestion():
+def _clases_gestion_comunes():
     """Todas las clases vigentes del catálogo con su foto diaria, costos y gerente (pantalla Gestión y eficiencia)."""
     return consultar(
         "select c.codigo_cafci, c.codigo_cnv, f.nombre as fondo, c.nombre as clase, g.nombre as gerente, "
@@ -313,13 +391,13 @@ def rendimientos_ultimos(codigos_cafci):
         "where r.codigo_cafci = any(%s) order by r.codigo_cafci, r.fecha desc", (list(codigos_cafci),))
 
 
-def cartera(codigo_cnv):
+def _cartera_comun(codigo_cnv):
     return consultar("select c.orden, c.rubro_cnv, c.instrumento, c.pct_pn, c.categoria_resumen, "
                      "c.categoria_detallada, c.moneda, c.indexacion, c.sin_clasificar "
                      "from carteras_ultima c where c.codigo_cnv = %s order by c.orden", (codigo_cnv,))
 
 
-def cartera_encabezado(codigo_cnv):
+def _cartera_encabezado_comun(codigo_cnv):
     return consultar("select fecha_cartera, moneda, patrimonio, instrumentos, sin_clasificar, "
                      "pct_sin_clasificar, controles_ok from carteras_fechas where codigo_cnv = %s "
                      "order by fecha_cartera desc limit 1", (codigo_cnv,))
@@ -330,7 +408,7 @@ def hechos(codigo_cnv):
                      "where codigo_cnv = %s order by fecha desc, documento desc", (codigo_cnv,))
 
 
-def buscar_instrumentos(texto):
+def _buscar_instrumentos_comunes(texto):
     return consultar("select f.nombre as fondo, c.instrumento, c.pct_pn, c.categoria_resumen, "
                      "c.categoria_detallada, c.moneda, c.fecha_cartera "
                      "from carteras_ultima c join fondos f using (codigo_cnv) "

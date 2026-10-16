@@ -136,6 +136,43 @@ def cartera_cnv(fondo, cache):
                        "fecha_cartera": c["fecha_cartera"], "clasificacion_cnv": robot.leer_clasificacion(html)}
 
 
+def efectiva(resultado, fondo, componer=None):
+    """Compone una copia; la caché de sesión conserva exclusivamente la fuente.
+
+    Se ejecuta en el hilo de la pantalla con Auth de servidor, nunca en el pool.
+    No descarga ni persiste; las siguientes sesiones revalidan su propio contexto.
+    """
+    from copy import deepcopy
+    import calculos
+    if componer is None:
+        import datos
+        componer = datos.componer_carteras_organizacion
+    salida = deepcopy(resultado)
+    cart, enc = salida['cartera'], salida['encabezado']
+    if cart.empty or enc.empty:
+        return salida
+    fuente = cart.copy(deep=True)
+    fuente['codigo_cnv'] = int(fondo['codigo_cnv'])
+    fuente['fecha_cartera'] = enc.iloc[0]['fecha_cartera']
+    fuente['rubro_cnv_original'] = fuente.rubro_cnv
+    fuente['instrumento_original'] = fuente.instrumento
+    fuente['moneda_del_fondo_original'] = enc.iloc[0]['moneda']
+    vista = componer(fuente.astype(object).where(pd.notna(fuente), None).to_dict('records'))
+    salida['clasificacion'] = vista
+    if vista['estado'] == 'deshabilitado':
+        salida['avisos'].append(vista['mensaje'])
+        return salida
+    salida['cartera'] = calculos.filas_efectivas(vista['filas'])[cart.columns]
+    salida['encabezado'] = calculos.encabezado_efectivo(enc, vista, int(fondo['codigo_cnv']))
+    resumen = vista['resumenes'][0]
+    salida['cabecera'].update(rubro=resumen['rubro'], categoria=(
+        resumen['tenencias'][0][0] if resumen['tenencias'] else 'Sin cartera'))
+    if resumen['bloqueados']:
+        motivos = sorted({f['bloqueo'] for f in vista['filas'] if f['bloqueo']})
+        salida['avisos'].append('Se conserva la fuente por identidad: ' + ', '.join(motivos) + '.')
+    return salida
+
+
 def cargar(fondo, cache, token=None, leer_historia=historia_github, leer_cartera=cartera_cnv):
     """Reutilizable por Ficha/Comparador; cache es un dict de st.session_state.
 
