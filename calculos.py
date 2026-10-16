@@ -156,6 +156,96 @@ def novedad_fuente(fuente, regla, decisiones, contexto):
     return {"clave_decision": clave, "fuente": actual, "privada": privada,
             "version_regla": regla.get("version")}
 
+def componer_carteras(filas_fuente, snapshot, contexto):
+    """U29: núcleo puro, sin consumidores. Una cartera completa por fondo.
+
+    Snapshot U26 con registros comunes y reglas privadas del contexto servidor.
+    Conserva filas originales; sumas/tenencias/contadores salen solo de efectiva.
+    Ausencias y ambigüedades bloquean el parche, nunca la consulta de la fuente.
+    """
+    from fuentes_consulta import SIN_CLASIFICAR, rubro_de_cartera
+
+    _contexto_clasificacion(contexto)
+    if snapshot['estado'] != 'habilitado':
+        return deepcopy(snapshot)
+    propias = _reglas_propias(snapshot['reglas'], contexto)
+    opciones = opciones_clasificacion(
+        filas_fuente + [f['fuente'] for f in snapshot['fuentes']], propias, contexto)
+    registros = {}
+    for registro in snapshot['fuentes']:
+        registros.setdefault(tuple(registro['componentes']), []).append(registro)
+    componentes, cantidades, fechas = [], {}, {}
+    for fila in filas_fuente:
+        codigo = fila['codigo_cnv']
+        fecha = fila.get('fecha_cartera')
+        if codigo in fechas and fechas[codigo] != fecha:
+            raise ErrorClasificacion('SNAPSHOT_MEZCLADO')
+        fechas[codigo] = fecha
+        try:
+            clave = _componentes(fila)
+        except ErrorClasificacion:
+            clave = None
+        componentes.append(clave)
+        if clave:
+            cantidades[clave] = cantidades.get(clave, 0) + 1
+    filas, por_fondo, pendientes = [], {}, set()
+    for fila, clave in zip(filas_fuente, componentes):
+        candidatos = registros.get(clave, [])
+        bloqueo = None
+        if clave is None:
+            bloqueo = 'IDENTIDAD_INCOMPLETA'
+        elif not candidatos:
+            bloqueo = 'IDENTIDAD_AUSENTE'
+        elif cantidades[clave] > 1 or len(candidatos) != 1 or candidatos[0]['ambiguo']:
+            bloqueo = 'IDENTIDAD_AMBIGUA'
+        registro = candidatos[0] if bloqueo is None else None
+        identidad = {'componentes': clave, 'estado': bloqueo or 'inequivoco',
+                     'instrumento_id': registro['instrumento_id'] if registro else None}
+        serializada = json.dumps(clave, ensure_ascii=False, separators=(',', ':'))
+        reglas = [r for r in propias if r['instrumento'] == serializada] if registro else []
+        if len(reglas) > 1:
+            raise ErrorClasificacion('REGLAS_AMBIGUAS')
+        regla = reglas[0] if reglas else None
+        efectiva = (validar_edicion(fila, regla['parche'], opciones) if regla else
+                    {k: deepcopy(fila.get(k)) for k in CAMPOS_CLASIFICACION})
+        # La marca fuente explícita también forma parte del contrato U25.
+        efectiva['sin_clasificar'] = (_tupla_clasificacion(efectiva) is None if regla
+                                     else _tupla_clasificacion(fila) is None)
+        pendiente = novedad_fuente(fila, regla, snapshot['decisiones'], contexto)
+        if pendiente:
+            pendientes.add(pendiente['clave_decision'])
+        salida = {**deepcopy(fila), 'efectiva': efectiva, 'identidad': identidad,
+                  'bloqueo': bloqueo, 'procedencia': 'organizacion' if regla else 'fuente',
+                  'revision': regla.get('version') if regla else None,
+                  'version_fuente': registro['version_fuente'] if registro else None,
+                  'pendiente': pendiente}
+        filas.append(salida)
+        por_fondo.setdefault(fila['codigo_cnv'], []).append(salida)
+    resumenes = []
+    for codigo, cartera in por_fondo.items():
+        sumas, lineas = {}, []
+        sin_clasificar, pct_sin_clasificar = 0, 0
+        for fila in cartera:
+            e, pct = fila['efectiva'], fila['pct_pn']
+            categoria = e['categoria_resumen']
+            sumas.setdefault(categoria, 0)
+            if pct is not None:
+                sumas[categoria] += pct
+            lineas.append((SIN_CLASIFICAR if e['sin_clasificar'] else categoria,
+                           e['categoria_detallada'], pct))
+            if e['sin_clasificar']:
+                sin_clasificar += 1
+                pct_sin_clasificar += pct if pct is not None else 0
+        rubro, mayores = rubro_de_cartera(lineas)
+        resumenes.append(dict(codigo_cnv=codigo, sumas=sumas, tenencias=mayores, rubro=rubro,
+                             instrumentos=len(cartera), sin_clasificar=sin_clasificar,
+                             pct_sin_clasificar=pct_sin_clasificar,
+                             pendientes=sum(f['pendiente'] is not None for f in cartera),
+                             bloqueados=sum(f['bloqueo'] is not None for f in cartera)))
+    return dict(estado='habilitado', filas=filas, resumenes=resumenes,
+                pendientes=len(pendientes))
+
+
 # U12: lista de códigos CNV (int), de un solo uso, dentro de la sesión autenticada.
 SELECCION_INFORME = "informe_desde_comparador"
 

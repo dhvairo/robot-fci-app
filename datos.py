@@ -100,10 +100,12 @@ def _contexto_clasificacion(persona=None, escritura=False):
             "usuario": actual["id"], "rol": actual["rol"]}
 
 
-def _clasificacion_transaccion(contexto, operacion):
+def _clasificacion_transaccion(contexto, operacion, solo_lectura=False):
     """Conexión propia, sin caché; commit al salir o rollback antes de informar fallo."""
     try:
         with psycopg.connect(_url(), connect_timeout=20) as conn:
+            if solo_lectura:
+                conn.execute('set transaction isolation level repeatable read, read only')
             conn.execute("select set_config('app.organizacion', %s, true), "
                          "set_config('app.dueno_colectivo', %s, true), "
                          "set_config('app.usuario', %s, true), "
@@ -127,18 +129,50 @@ def leer_clasificaciones(persona, ids):
     contexto = _contexto_clasificacion(persona)
     identificadores = [str(UUID(str(i))) for i in ids]
 
+    return _clasificacion_transaccion(
+        contexto, lambda conn: _leer_clasificaciones(conn, identificadores, contexto))
+
+
+def _leer_clasificaciones(conn, identificadores, contexto):
+    resultado = conn.execute("select public.clasificacion_leer(%s::uuid[])",
+                             (identificadores,)).fetchone()[0]
+    claves = {f["instrumento_id"]: json.dumps(f["componentes"], ensure_ascii=False,
+              separators=(",", ":")) for f in resultado["fuentes"]}
+    for regla in resultado["reglas"]:
+        regla["instrumento"] = claves[regla["instrumento_id"]]
+    resultado["decisiones"] = {
+        (contexto["organizacion"], contexto["dueno"], claves[d["instrumento_id"]],
+         tuple(d["huella"][:4])): d["accion"] for d in resultado["decisiones"]}
+    return resultado
+
+
+def componer_carteras_organizacion(filas_fuente):
+    """U29: entrada servidor sin pantallas ni caché privada global.
+
+    Recibe las carteras comunes ya cargadas (listas de dicts), no agregados ni
+    organización/dueño del navegador. Solo lee registro y adaptador U26.
+    """
+    import acceso
+    from psycopg.types.json import Jsonb
+
+    contexto = _contexto_clasificacion(acceso.usuario())
+    claves = set()
+    for fila in filas_fuente:
+        try:
+            claves.add(calculos._componentes(fila))
+        except calculos.ErrorClasificacion:
+            pass  # El núcleo explica el bloqueo y conserva la fuente.
+
     def leer(conn):
-        resultado = conn.execute("select public.clasificacion_leer(%s::uuid[])",
-                                 (identificadores,)).fetchone()[0]
-        claves = {f["instrumento_id"]: json.dumps(f["componentes"], ensure_ascii=False,
-                  separators=(",", ":")) for f in resultado["fuentes"]}
-        for regla in resultado["reglas"]:
-            regla["instrumento"] = claves[regla["instrumento_id"]]
-        resultado["decisiones"] = {
-            (contexto["organizacion"], contexto["dueno"], claves[d["instrumento_id"]],
-             tuple(d["huella"][:4])): d["accion"] for d in resultado["decisiones"]}
-        return resultado
-    return _clasificacion_transaccion(contexto, leer)
+        # Misma transacción/snapshot para resolver componentes y leer privadas.
+        ids = [r[0] for r in conn.execute(
+            'select id from public.instrumentos_cartera '
+            'where clave_componentes = any(%s::jsonb[])',
+            ([Jsonb(list(c)) for c in sorted(claves, key=str)],)).fetchall()]
+        snapshot = _leer_clasificaciones(conn, ids, contexto)
+        return calculos.componer_carteras(filas_fuente, snapshot, contexto)
+
+    return _clasificacion_transaccion(contexto, leer, solo_lectura=True)
 
 
 def _escribir_clasificacion(instrumento_id, accion, parche, version_regla, version_fuente):
