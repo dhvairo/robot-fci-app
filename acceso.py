@@ -107,6 +107,27 @@ def _admin():
     return persona
 
 
+def requerir_admin_clasificacion():
+    """Contexto colectivo confiable; nunca recibe identidad desde un formulario.
+
+    Solo propia/equipo está configurada en servidor en esta unidad sin base nueva.
+    Conserva los controles y comportamiento del administrador de usuarios.
+    """
+    mensaje = "Solo un administrador autorizado puede editar la clasificación."
+    try:
+        anterior = dict(usuario() or {})
+        persona = _admin()
+        if (persona["id"] != anterior.get("id")
+                or persona["organizacion"] != anterior.get("organizacion")
+                or not persona.get("version_clave")
+                or persona["organizacion"] != "propia"):
+            raise ErrorAcceso(mensaje)
+        return {"usuario": persona["id"], "organizacion": "propia", "dueno": "equipo",
+                "rol": "admin", "version_clave": persona["version_clave"]}
+    except (ErrorAcceso, KeyError, TypeError, ValueError, AttributeError):
+        raise ErrorAcceso(mensaje) from None
+
+
 def validar_correo(correo, confirmacion):
     correo = correo.strip()
     if correo.casefold() != confirmacion.strip().casefold():

@@ -1,10 +1,160 @@
 """Lógica de las pantallas que se puede probar sin Streamlit ni base: filtros, períodos y cabecera de la ficha."""
 import unicodedata
+import json
+from copy import deepcopy
 from datetime import timedelta
 
 import pandas as pd
 
 import formato
+
+
+# U25: contratos de datos; no asignan UUID, consultan repositorios ni escriben.
+CAMPOS_CLASIFICACION = ("categoria_resumen", "categoria_detallada", "moneda", "indexacion")
+CAMPOS_IDENTIDAD = ("codigo_cnv", "rubro_cnv_original", "instrumento_original",
+                    "moneda_del_fondo_original", "serie", "vencimiento")
+
+
+class ErrorClasificacion(ValueError):
+    """Código fijo, sin contenido de las entradas."""
+
+
+def _normalizar_componente(valor):
+    if valor is None:
+        return None
+    if not isinstance(valor, (str, int)) or isinstance(valor, bool):
+        raise ErrorClasificacion("IDENTIDAD_INVALIDA")
+    return " ".join(unicodedata.normalize("NFC", str(valor)).split())
+
+
+def _componentes(fila):
+    valores = tuple(_normalizar_componente(fila.get(k)) for k in CAMPOS_IDENTIDAD)
+    if any(not v for v in valores[:4]) or any(v == "" for v in valores[4:]):
+        raise ErrorClasificacion("IDENTIDAD_INVALIDA")
+    return ("CNV", *valores)
+
+
+def identidad_instrumento(fila, contexto):
+    """contexto.apariciones: snapshot completo, una fecha/revisión por fondo.
+
+    Devuelve componentes, clave JSON completa y estado; hash nunca es identidad.
+    Serie/vencimiento opcionales complementan el nombre original sin inferencias.
+    """
+    componentes = _componentes(fila)
+    apariciones = contexto.get("apariciones")
+    if not isinstance(apariciones, list):
+        raise ErrorClasificacion("CONTEXTO_IDENTIDAD_INVALIDO")
+    cantidad = sum(_componentes(f) == componentes for f in apariciones)
+    if not cantidad:
+        raise ErrorClasificacion("CONTEXTO_IDENTIDAD_INVALIDO")
+    return {"componentes": componentes,
+            "clave": json.dumps(componentes, ensure_ascii=False, separators=(",", ":")),
+            "estado": "ambiguo" if cantidad > 1 else "inequivoco"}
+
+
+def _tupla_clasificacion(fuente):
+    if not fuente or fuente.get("sin_clasificar"):
+        return None
+    valores = tuple(fuente.get(k) for k in CAMPOS_CLASIFICACION)
+    if any(not isinstance(v, str) or not v.strip() for v in valores[:2]):
+        return None
+    if any(v is not None and (not isinstance(v, str) or not v.strip()) for v in valores[2:]):
+        return None
+    return valores
+
+
+def _contexto_clasificacion(contexto):
+    if (not isinstance(contexto, dict)
+            or any(not isinstance(contexto.get(k), str) or not contexto[k].strip()
+                   for k in ("organizacion", "dueno"))):
+        raise ErrorClasificacion("CONTEXTO_INVALIDO")
+    return contexto["organizacion"], contexto["dueno"]
+
+
+def _reglas_propias(reglas, contexto):
+    org, dueno = _contexto_clasificacion(contexto)
+    return [r for r in reglas if r.get("activa") is True
+            and r.get("organizacion") == org and r.get("dueno") == dueno]
+
+
+def _aplicar_parche(fuente, parche):
+    if not isinstance(parche, dict) or set(parche) - set(CAMPOS_CLASIFICACION):
+        raise ErrorClasificacion("PARCHE_INVALIDO")
+    if any(v is not None and (not isinstance(v, str) or not v.strip()) for v in parche.values()):
+        raise ErrorClasificacion("PARCHE_INVALIDO")
+    final = {k: deepcopy(fuente.get(k)) for k in CAMPOS_CLASIFICACION}
+    final.update(deepcopy(parche))
+    return final
+
+
+def opciones_clasificacion(filas_fuente, reglas_organizacion, contexto):
+    """Tuplas completas únicas: fuente clasificada y valor privado vigente propio.
+
+    Cada regla contiene fuente_base (dict), parche, instrumento (clave completa),
+    organizacion, dueno, activa y version. No se mezclan etiquetas individuales.
+    """
+    opciones = set()
+    for fila in filas_fuente:
+        tupla = _tupla_clasificacion(fila)
+        if tupla:
+            opciones.add(tupla)
+    for regla in _reglas_propias(reglas_organizacion, contexto):
+        tupla = _tupla_clasificacion(_aplicar_parche(regla.get("fuente_base") or {}, regla["parche"]))
+        if tupla:
+            opciones.add(tupla)
+    return tuple(sorted(opciones, key=lambda t: json.dumps(t, ensure_ascii=False)))
+
+
+def validar_edicion(fuente, parche, opciones):
+    """Devuelve dict completo válido; errores fijos de parche/combinación."""
+    final = _aplicar_parche(fuente, parche)
+    tupla = _tupla_clasificacion(final)
+    if tupla is None or tupla not in opciones:
+        raise ErrorClasificacion("COMBINACION_INVALIDA")
+    return final
+
+
+def clasificacion_efectiva(filas_fuente, reglas_organizacion, contexto):
+    """Lista de copias con efectiva, procedencia, revision e identidad.
+
+    Los originales se conservan. Una identidad ambigua jamás propaga un parche.
+    contexto solo lo entrega el servidor; las funciones puras no autorizan usuarios.
+    """
+    propias = _reglas_propias(reglas_organizacion, contexto)
+    opciones = opciones_clasificacion(filas_fuente, reglas_organizacion, contexto)
+    salida = []
+    for fila in filas_fuente:
+        identidad = identidad_instrumento(fila, {"apariciones": filas_fuente})
+        reglas = [r for r in propias if r["instrumento"] == identidad["clave"]]
+        if len(reglas) > 1:
+            raise ErrorClasificacion("REGLAS_AMBIGUAS")
+        regla = reglas[0] if reglas and identidad["estado"] == "inequivoco" else None
+        efectiva = (validar_edicion(fila, regla["parche"], opciones) if regla
+                    else {k: deepcopy(fila.get(k)) for k in CAMPOS_CLASIFICACION})
+        efectiva["sin_clasificar"] = _tupla_clasificacion(efectiva) is None
+        salida.append({**deepcopy(fila), "efectiva": efectiva, "identidad": identidad,
+                       "procedencia": "organizacion" if regla else "fuente",
+                       "revision": regla.get("version") if regla else None})
+    return salida
+
+
+def novedad_fuente(fuente, regla, decisiones, contexto):
+    """decisiones: mapping de repositorio falso, solo lectura.
+
+    Clave (org, dueno, instrumento, tupla_fuente); valor base/aceptar/conservar.
+    Devuelve pendiente con tuplas fuente/privada o None. No actualiza la base.
+    """
+    propias = _reglas_propias([regla] if regla else [], contexto)
+    actual = _tupla_clasificacion(fuente)
+    if not propias or not regla.get("parche") or actual is None:
+        return None
+    privada = _tupla_clasificacion(_aplicar_parche(fuente, regla["parche"]))
+    base = _tupla_clasificacion(regla.get("fuente_base"))
+    clave = (*_contexto_clasificacion(contexto), regla["instrumento"], actual)
+    if actual in (base, privada) or decisiones.get(clave) in ("base", "aceptar", "conservar"):
+        return None
+    return {"clave_decision": clave, "fuente": actual, "privada": privada,
+            "version_regla": regla.get("version")}
 
 # U12: lista de códigos CNV (int), de un solo uso, dentro de la sesión autenticada.
 SELECCION_INFORME = "informe_desde_comparador"
