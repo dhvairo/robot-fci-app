@@ -1,4 +1,4 @@
-"""Informe descriptivo de fondos: la tabla de la solapa "Resumen" del Excel de carteras y el informe (pantalla y PDF)."""
+"""Informe descriptivo: la tabla de la solapa "Resumen" del Excel de carteras y el informe (pantalla y PDF)."""
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -14,9 +14,9 @@ import filtros  # noqa: E402
 import informe  # noqa: E402
 import marca  # noqa: E402
 
-st.set_page_config(page_title="Informe descriptivo de fondos", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Informe descriptivo", page_icon="📈", layout="wide")
 acceso.requerir()
-st.title("Informe descriptivo de fondos")
+st.title("Informe descriptivo")
 st.caption("Composición de la última cartera disponible de los fondos seleccionados (fuente: CNV).")
 st.button("Restablecer", on_click=filtros.restablecer_informe, args=(st.session_state,))
 transferencia = st.session_state.get(calculos.SELECCION_INFORME, [])
