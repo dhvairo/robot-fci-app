@@ -128,6 +128,32 @@ def requerir_admin_clasificacion():
         raise ErrorAcceso(mensaje) from None
 
 
+def requerir_contexto_seguimiento(registro=None):
+    """Registro servidor organización -> dueño colectivo; sin configuración rechaza.
+
+    No está conectado a pantallas. El registro inyectado nunca viene del formulario.
+    Cada lectura/escritura debe llamar de nuevo a este control.
+    """
+    mensaje = "Contexto de seguimiento no autorizado."
+    try:
+        anterior = dict(usuario() or {})
+        persona = _validar_sesion()
+        organizacion = persona["organizacion"]
+        dueno = registro.get(organizacion) if isinstance(registro, dict) else None
+        if (not isinstance(organizacion, str) or not organizacion.strip()
+                or not isinstance(dueno, str) or not dueno.strip()
+                or persona["id"] != anterior.get("id")
+                or organizacion != anterior.get("organizacion")
+                or persona["rol"] not in ("admin", "asesor")
+                or persona["cambio_obligatorio"] or not persona["version_clave"]):
+            raise ErrorAcceso(mensaje)
+        identificador = str(UUID(persona["id"]))
+        return {"organizacion": organizacion, "dueno": dueno, "usuario": identificador,
+                "rol": persona["rol"], "version_clave": persona["version_clave"]}
+    except (ErrorAcceso, KeyError, TypeError, ValueError, AttributeError):
+        raise ErrorAcceso(mensaje) from None
+
+
 def validar_correo(correo, confirmacion):
     correo = correo.strip()
     if correo.casefold() != confirmacion.strip().casefold():

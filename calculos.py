@@ -781,6 +781,178 @@ def validar_pedido(accion, descripcion=None, idea=None, id_ficha=None):
     return {"accion": accion, "descripcion": desc, "idea": idea, "id_ficha": ficha}, None
 
 
+class ErrorSeguimiento(ValueError):
+    """Rechazo o fallo explícito; nunca representa una operación aplicada."""
+
+
+def _contexto_seguimiento(resolver):
+    # Resolver confiable del servidor, no una identidad enviada por el navegador.
+    if resolver is None:
+        from acceso import requerir_contexto_seguimiento
+        resolver = requerir_contexto_seguimiento
+    try:
+        contexto = resolver()
+        if (any(not isinstance(contexto.get(k), str) or not contexto[k].strip()
+                for k in ("organizacion", "dueno", "usuario", "version_clave"))
+                or contexto.get("rol") not in ("admin", "asesor")):
+            raise ValueError
+        return contexto
+    except Exception:
+        raise ErrorSeguimiento("CONTEXTO_RECHAZADO") from None
+
+
+def _par_seguimiento(contexto):
+    return contexto["organizacion"], contexto["dueno"]
+
+
+def _filas_seguimiento(estado, contexto):
+    par = _par_seguimiento(contexto)
+    for tabla in ("elecciones", "textos", "pedidos"):
+        for fila in estado[tabla]:
+            if (fila.get("organizacion"), fila.get("dueno")) != par:
+                raise ErrorSeguimiento("DUENO_AJENO")
+    return estado
+
+
+def componer_seguimiento(catalogo, repositorio, resolver=None):
+    """Lectura privada sin caché; repositorio.leer(par) debe fallar explícitamente."""
+    contexto = _contexto_seguimiento(resolver)
+    try:
+        estado = _filas_seguimiento(repositorio.leer(_par_seguimiento(contexto)), contexto)
+        elecciones = {f["codigo_cnv"]: f for f in estado["elecciones"]}
+        textos = {f["codigo_cnv"]: f for f in estado["textos"]}
+        salida = deepcopy(catalogo)
+        for fila in salida:
+            codigo = fila["codigo_cnv"]
+            fila["seguido"] = elecciones.get(codigo, {}).get("seguido", False)
+            for campo in ("descripcion_breve", "tematica", "tematica_provisoria"):
+                fila[campo] = deepcopy(textos.get(codigo, {}).get(campo))
+        return salida
+    except ErrorSeguimiento:
+        raise
+    except Exception:
+        raise ErrorSeguimiento("LECTURA_FALLIDA") from None
+
+
+def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
+    """Anota pendiente, nunca aplicado. transaccion(par, función) debe ser atómica.
+
+    El adaptador futuro deberá bloquear, verificar versión/pendiente y confirmar antes
+    de retornar; U37 solo prueba este protocolo con un repositorio ficticio.
+    """
+    contexto = _contexto_seguimiento(resolver)
+    permitidos = {"accion", "codigo_cnv", "version_esperada", "version_textos_esperada",
+                  "clave", "descripcion", "idea", "id_ficha"}
+    if not isinstance(formulario, dict) or set(formulario) - permitidos:
+        raise ErrorSeguimiento("FORMULARIO_INVALIDO")
+    accion = formulario.get("accion")
+    if accion not in ("seguir", "dejar"):
+        raise ErrorSeguimiento("ACCION_NO_HABILITADA")
+    codigo, version, clave = (formulario.get(k) for k in ("codigo_cnv", "version_esperada", "clave"))
+    version_textos = formulario.get("version_textos_esperada")
+    if (type(codigo) is not int or codigo <= 0
+            or codigo not in {f["codigo_cnv"] for f in catalogo}
+            or type(version) is not int or version < 0
+            or type(version_textos) is not int or version_textos < 0
+            or not isinstance(clave, str) or not clave.strip()):
+        raise ErrorSeguimiento("SOLICITUD_INVALIDA")
+    if any(formulario.get(k) is not None and not isinstance(formulario[k], str)
+           for k in ("descripcion", "idea")):
+        raise ErrorSeguimiento("TEXTOS_INVALIDOS")
+    datos, error = validar_pedido(accion, formulario.get("descripcion"), formulario.get("idea"),
+                                 formulario.get("id_ficha"))
+    if error:
+        raise ErrorSeguimiento("LIMITES_INVALIDOS")
+    intencion = {**datos, "codigo_cnv": codigo, "version_esperada": version,
+                 "version_textos_esperada": version_textos,
+                 "clave": clave, "usuario": contexto["usuario"],
+                 "organizacion": contexto["organizacion"], "dueno": contexto["dueno"]}
+
+    def anotar(estado):
+        _filas_seguimiento(estado, contexto)
+        for pedido in estado["pedidos"]:
+            if pedido["clave"] == clave:
+                if any(pedido.get(k) != v for k, v in intencion.items()):
+                    raise ErrorSeguimiento("IDEMPOTENCIA_INCOMPATIBLE")
+                return deepcopy(pedido)
+        actual = next((f for f in estado["elecciones"] if f["codigo_cnv"] == codigo), {})
+        if actual.get("version", 0) != version:
+            raise ErrorSeguimiento("VERSION_VIEJA")
+        texto = next((f for f in estado["textos"] if f["codigo_cnv"] == codigo), {})
+        if texto.get("version", 0) != version_textos:
+            raise ErrorSeguimiento("VERSION_TEXTOS_VIEJA")
+        if any(p["codigo_cnv"] == codigo and p["estado"] == "pendiente" for p in estado["pedidos"]):
+            raise ErrorSeguimiento("YA_PENDIENTE")
+        pedido = {**intencion, "estado": "pendiente"}
+        estado["pedidos"].append(pedido)
+        return deepcopy(pedido)
+
+    try:
+        return repositorio.transaccion(_par_seguimiento(contexto), anotar)
+    except ErrorSeguimiento:
+        raise
+    except Exception:
+        raise ErrorSeguimiento("REGISTRO_FALLIDO") from None
+
+
+def confirmar_seguimiento_ficticio(estado, clave, preparado=False):
+    """Transición pura del futuro operador; NO es API de formulario ni procesador.
+
+    Retorna copia para commit atómico de elección/textos/estado por el adaptador.
+    preparado acredita recursos comunes únicamente en la simulación.
+    """
+    nuevo = deepcopy(estado)
+    pedido = next((p for p in nuevo["pedidos"] if p["clave"] == clave), None)
+    if pedido is None or pedido["estado"] != "pendiente" or pedido["accion"] not in ("seguir", "dejar"):
+        raise ErrorSeguimiento("PEDIDO_INVALIDO")
+    _filas_seguimiento(nuevo, pedido)
+    codigo = pedido["codigo_cnv"]
+    eleccion = next((f for f in nuevo["elecciones"] if f["codigo_cnv"] == codigo), None)
+    if (eleccion or {}).get("version", 0) != pedido["version_esperada"]:
+        raise ErrorSeguimiento("VERSION_VIEJA")
+    texto = next((f for f in nuevo["textos"] if f["codigo_cnv"] == codigo), None)
+    if (texto or {}).get("version", 0) != pedido["version_textos_esperada"]:
+        raise ErrorSeguimiento("VERSION_TEXTOS_VIEJA")
+    if pedido["accion"] == "seguir" and preparado is not True:
+        raise ErrorSeguimiento("PREPARACION_INCOMPLETA")
+    if eleccion is None:
+        eleccion = {k: pedido[k] for k in ("organizacion", "dueno", "codigo_cnv")}
+        nuevo["elecciones"].append(eleccion)
+    eleccion.update(seguido=pedido["accion"] == "seguir", version=pedido["version_esperada"] + 1,
+                    usuario=pedido["usuario"])
+    if pedido["accion"] == "seguir" and (pedido["descripcion"] or pedido["idea"]):
+        if texto is None:
+            texto = {k: pedido[k] for k in ("organizacion", "dueno", "codigo_cnv")}
+            nuevo["textos"].append(texto)
+        for origen, destino in (("descripcion", "descripcion_breve"), ("idea", "tematica")):
+            if pedido[origen]:
+                texto[destino] = pedido[origen]
+        texto.update(version=texto.get("version", 0) + 1, usuario=pedido["usuario"])
+    pedido["estado"] = "listo"
+    return nuevo
+
+
+def necesidades_seguimiento(elecciones, reservas, pares_habilitados):
+    """Unión común pura del operador, no accesible desde formularios privados.
+
+    Reservas operativas explícitas: codigo_cnv, activa (bool), motivo no vacío.
+    No pausa descargas, no borra datos; el bloqueo/reconciliación real queda pendiente.
+    """
+    necesidad = set()
+    for fila in elecciones:
+        if ((fila.get("organizacion"), fila.get("dueno")) not in pares_habilitados
+                or type(fila.get("seguido")) is not bool):
+            raise ErrorSeguimiento("ELECCION_INVALIDA")
+        if fila["seguido"]:
+            necesidad.add(fila["codigo_cnv"])
+    for fila in reservas:
+        if type(fila.get("activa")) is not bool or not isinstance(fila.get("motivo"), str) or not fila["motivo"].strip():
+            raise ErrorSeguimiento("RESERVA_INVALIDA")
+        if fila["activa"]:
+            necesidad.add(fila["codigo_cnv"])
+    return necesidad
+
+
 def motivo_pide_id(motivo):
     """¿El problema se arregla cargando el ID de la ficha CNV? (no se encontró la ficha, no sirve o es de otra gerente)"""
     return "ficha cnv" in str(motivo or "").lower()
