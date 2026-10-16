@@ -102,6 +102,17 @@ def opciones_clasificacion(filas_fuente, reglas_organizacion, contexto):
         tupla = _tupla_clasificacion(_aplicar_parche(regla.get("fuente_base") or {}, regla["parche"]))
         if tupla:
             opciones.add(tupla)
+        # Una regla parcial ya guardada hereda la fuente vigente. Su resultado
+        # sigue siendo una opción privada propia aunque cambie un campo heredado.
+        for fila in filas_fuente:
+            try:
+                clave = json.dumps(_componentes(fila), ensure_ascii=False, separators=(',', ':'))
+            except ErrorClasificacion:
+                continue
+            if clave == regla['instrumento']:
+                vigente = _tupla_clasificacion(_aplicar_parche(fila, regla['parche']))
+                if vigente:
+                    opciones.add(vigente)
     return tuple(sorted(opciones, key=lambda t: json.dumps(t, ensure_ascii=False)))
 
 

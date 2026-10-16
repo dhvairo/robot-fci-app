@@ -299,6 +299,25 @@ def resolver_fuente(instrumento_id, accion, version_regla, version_fuente):
     return _escribir_clasificacion(instrumento_id, accion, None, version_regla, version_fuente)
 
 
+def resolver_novedad_ficha(fila, accion):
+    """Decide sobre el snapshot abierto; SQL revalida identidad y versiones bajo bloqueo."""
+    from uuid import UUID
+    _contexto_clasificacion(escritura=True)
+    identidad = fila.get('identidad', {})
+    if (fila.get('bloqueo') or identidad.get('estado') != 'inequivoco'
+            or not identidad.get('instrumento_id')
+            or tuple(identidad.get('componentes') or ()) != calculos._componentes(fila)):
+        raise calculos.ErrorClasificacion('IDENTIDAD_BLOQUEADA')
+    if not fila.get('pendiente') or not fila.get('parche'):
+        raise calculos.ErrorClasificacion('NOVEDAD_AUSENTE')
+    try:
+        UUID(str(identidad['instrumento_id']))
+    except (ValueError, TypeError, AttributeError):
+        raise calculos.ErrorClasificacion('IDENTIDAD_BLOQUEADA') from None
+    return resolver_fuente(identidad['instrumento_id'], accion,
+                          fila['revision'], fila['version_fuente'])
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def consultar(sql, params=None):
     """Corre una consulta (solo lectura) y devuelve un DataFrame."""

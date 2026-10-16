@@ -19,6 +19,49 @@ from copy import deepcopy
 ETIQUETAS = dict(zip(calculos.CAMPOS_CLASIFICACION, ('Rubro', 'Categoría', 'Moneda', 'Indexación')))
 
 
+def mostrar_novedades_clasificacion(filas, clave, motivo):
+    pendientes = {f['identidad']['instrumento_id']: f for f in filas
+                  if f.get('pendiente') and not f.get('bloqueo')}
+    if not pendientes:
+        st.session_state.pop(clave + '_snapshot', None)
+        return
+    st.warning('La fuente tiene una nueva clasificación. Podés usarla o conservar la de tu organización.')
+    elegido = st.selectbox('Novedad de clasificación', list(pendientes), index=None,
+        format_func=lambda i: f"{pendientes[i]['instrumento']} · {i}", key=clave + '_elegida')
+    if elegido is None:
+        st.session_state.pop(clave + '_snapshot', None)
+        return
+    anterior = st.session_state.get(clave + '_snapshot')
+    if anterior is None or anterior['identidad'] != pendientes[elegido]['identidad']:
+        st.session_state[clave + '_snapshot'] = deepcopy(pendientes[elegido])
+    original = st.session_state[clave + '_snapshot']
+    st.write('Clasificación original de la fuente:',
+             {ETIQUETAS[k]: original.get(k) for k in calculos.CAMPOS_CLASIFICACION})
+    st.write('Clasificación efectiva de tu organización:',
+             {ETIQUETAS[k]: original['efectiva'].get(k) for k in calculos.CAMPOS_CLASIFICACION})
+    st.caption('Usar la fuente desactiva todo el parche y sigue sus cambios futuros. '
+               'Conservar mantiene solo los campos administrativos; los heredados siguen a la fuente.')
+    if st.button('Actualizar novedad', key=clave + '_actualizar'):
+        st.session_state.pop(clave + '_snapshot', None)
+        st.rerun()
+    for accion, etiqueta in (('aceptar', 'Usar clasificación de la fuente'),
+                             ('conservar', 'Conservar clasificación de mi organización')):
+        if st.button(etiqueta, disabled=bool(motivo), key=clave + '_' + accion):
+            try:
+                resultado = datos.resolver_novedad_ficha(original, accion)
+            except (acceso.ErrorAcceso, calculos.ErrorClasificacion) as error:
+                st.error(str(error))
+                return
+            if resultado['estado'] != 'guardado':
+                st.warning(resultado.get('mensaje', 'No se resolvió la novedad.'))
+                return
+            st.session_state.pop(clave + '_snapshot', None)
+            st.session_state[clave + '_resultado'] = (
+                'Clasificación de la fuente aceptada' if accion == 'aceptar'
+                else 'Se conservó la clasificación de tu organización')
+            st.rerun()
+
+
 def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
     persona = acceso.usuario() or {}
     motivo = ''
@@ -39,12 +82,17 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
                                   'pct_pn': '% del PN', 'sin_clasificar': 'Sin clasificar', **ETIQUETAS})
     tabla['Fecha'] = formato.fecha(fecha)
     tabla['Procedencia'] = [por_orden.get(o, {}).get('procedencia', 'fuente') for o in cart.orden]
+    tabla['Novedad de fuente'] = ['Pendiente' if por_orden.get(o, {}).get('pendiente') else ''
+                                for o in cart.orden]
     tabla['Motivo'] = [motivo or por_orden.get(o, {}).get('bloqueo') or '' for o in cart.orden]
     for campo in calculos.CAMPOS_CLASIFICACION:
         tabla[f'{ETIQUETAS[campo]} original'] = [por_orden.get(o, {}).get(campo) for o in cart.orden]
     tabla = formato.tabla(tabla, numeros={'% del PN': 2}, booleanos=['Sin clasificar'])
     tabla.insert(0, 'Editar', False)
     clave = f"ficha_edicion_{persona.get('id')}_{persona.get('organizacion')}_{codigo}_{fecha}"
+    mostrar_novedades_clasificacion(filas, clave + '_novedad', motivo)
+    if clave + '_novedad_resultado' in st.session_state:
+        st.success(st.session_state.pop(clave + '_novedad_resultado'))
     tabla_clave = clave + '_tabla' + str(tuple(
         (o, por_orden.get(o, {}).get('identidad', {}).get('instrumento_id')) for o in cart.orden))
     st.caption('ítems clasificados por administrador · procedencia organización; los demás conservan la fuente.')
