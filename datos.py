@@ -174,7 +174,7 @@ def clases_preferidas(df_clases):
 
 def serie(codigos_cafci):
     return consultar("select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima "
-                     "where codigo_cafci = any(%s) and cuotaparte is not null order by fecha",
+                     "where codigo_cafci = any(%s) order by fecha",
                      (list(codigos_cafci),))
 
 

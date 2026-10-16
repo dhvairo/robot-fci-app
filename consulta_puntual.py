@@ -159,8 +159,8 @@ def cargar(fondo, cache, token=None, leer_historia=historia_github, leer_cartera
             ultimo = robot.calcular_clase(filas)[-1]
             rend.append({**ultimo, "cuotaparte": filas[-1]["cuotaparte"], "patrimonio": filas[-1]["patrimonio"]})
         resultado["rendimientos"] = pd.DataFrame(rend)
-        resultado["serie"] = df[(df["marca_estado"] == "") & df["cuotaparte"].notna()
-                                 & (df["cuotaparte"] > 0)][SERIE_COLUMNAS].copy()
+        resultado["serie"] = df[SERIE_COLUMNAS].copy()
+        resultado["serie"].loc[df["marca_estado"].ne(""), ["cuotaparte", "patrimonio"]] = None
     except (ErrorConsulta, ValueError, KeyError, OSError):
         # Un mensaje explícito para configuración incompleta, sin incluir el token.
         resultado["avisos"].append("Historia no disponible. " + (

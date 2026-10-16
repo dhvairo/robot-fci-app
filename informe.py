@@ -178,6 +178,12 @@ def pdf(secs, titulo_documento=None):
                     # La primera columna contiene los nombres de clase/instrumento.
                     n = len(tabla.columns)
                     anchos = [ancho] if n == 1 else [ancho * .28] + [ancho * .72 / (n - 1)] * (n - 1)
+                    if "Último valor de patrimonio" in tabla.columns:
+                        # Mantener completos fechas y palabras de los encabezados del Comparador.
+                        pesos = {"Clase": 90, "Moneda": 42, "Datos": 30,
+                                 "Último valor de patrimonio": 82, "Fecha del patrimonio": 82}
+                        medidas = [pesos.get(c, 58) for c in tabla.columns]
+                        anchos = [ancho * m / sum(medidas) for m in medidas]
                     t = Table(filas, colWidths=anchos, repeatRows=1, hAlign="LEFT")
                     t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), azul),
                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -241,7 +247,9 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
     if not fondo["seguido"] and not fondo.get("consulta_puntual"):
         contenido.append(filtros.AVISO_NO_SEGUIDO)
     else:
-        if not serie.empty and serie["fecha"].nunique() >= 2:
+        if calculos.historia_insuficiente(serie):
+            contenido.append("Historia insuficiente en alguna clase: se necesitan dos cuotapartes válidas para mostrar evolución.")
+        if not serie.empty and serie["base 100"].notna().any():
             # Dibujo vectorial: no necesita Kaleido ni un navegador en Streamlit.
             dibujo = shapes.Drawing(500, 245)
             dibujo.add(shapes.String(0, 231, "Evolución de la cuotaparte (base 100)", fontName="Helvetica-Bold", fontSize=10))
@@ -256,11 +264,20 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
             for i, (_, grupo) in enumerate(serie.groupby("codigo_cafci")):
                 grupo = grupo.sort_values("fecha")
                 puntos = []
+                color = colors.HexColor(marca.paleta()[i % len(marca.paleta())])
+                def trazar():
+                    if len(puntos) >= 4:
+                        dibujo.add(shapes.PolyLine(puntos, strokeColor=color, strokeWidth=1.2))
+                    elif puntos:
+                        dibujo.add(shapes.Circle(*puntos, 2, fillColor=color, strokeColor=color))
                 for _, r in grupo.iterrows():
+                    if pd.isna(r["base 100"]):
+                        trazar()
+                        puntos = []
+                        continue
                     puntos += [48 + (r.fecha - inicio).days / max(1, (fin - inicio).days) * 442,
                                48 + (float(r["base 100"]) - bajo) / (alto - bajo) * 140]
-                color = colors.HexColor(marca.paleta()[i % len(marca.paleta())])
-                dibujo.add(shapes.PolyLine(puntos, strokeColor=color, strokeWidth=1.2))
+                trazar()
             dibujo.add(shapes.String(48, 30, formato.fecha(inicio), fontSize=8))
             dibujo.add(shapes.String(490, 30, formato.fecha(fin), textAnchor="end", fontSize=8))
             contenido.append(dibujo)
@@ -303,22 +320,30 @@ def pdf_comparador(serie, tabla, modo, notas=()):
         campos.append(("patrimonio", "Patrimonio (moneda de cada clase)"))
     if not serie.empty:
         inicio, fin = serie.fecha.min(), serie.fecha.max()
-        for campo, titulo in campos:
-            if campo not in serie or serie[campo].dropna().empty:
+        colores = {codigo: marca.paleta()[i % len(marca.paleta())]
+                   for i, codigo in enumerate(serie.codigo_cafci.unique())}
+        paneles = [(campo, titulo, grupo)
+                   for campo, titulo in campos
+                   for moneda, grupo in (serie.groupby("moneda", sort=False)
+                                          if campo == "patrimonio" else [(None, serie)])]
+        for campo, titulo, panel in paneles:
+            if campo == "patrimonio":
+                titulo += " — " + str(panel.moneda.iloc[0])
+            if campo not in serie or panel[campo].dropna().empty:
                 contenido.append(titulo + ": sin datos disponibles.")
                 continue
             dibujo = shapes.Drawing(470, 230)
             dibujo.add(shapes.String(0, 215, titulo, fontName="Helvetica-Bold", fontSize=10))
-            bajo, alto = float(serie[campo].min()), float(serie[campo].max())
+            bajo, alto = float(panel[campo].min()), float(panel[campo].max())
             if bajo == alto:
                 alto = bajo + 1
             for k in range(5):
                 y = 45 + k * 35
                 dibujo.add(shapes.Line(65, y, 465, y, strokeColor=colors.HexColor("#D0D7E2")))
                 dibujo.add(shapes.String(0, y - 3, formato.numero(bajo + (alto - bajo) * k / 4), fontSize=7))
-            for i, (_, grupo) in enumerate(serie.groupby("codigo_cafci", sort=False)):
+            for codigo, grupo in panel.groupby("codigo_cafci", sort=False):
                 puntos = []
-                color = colors.HexColor(marca.paleta()[i % len(marca.paleta())])
+                color = colors.HexColor(colores[codigo])
                 def trazar():
                     if len(puntos) >= 4:
                         dibujo.add(shapes.PolyLine(puntos, strokeColor=color, strokeWidth=1.2))

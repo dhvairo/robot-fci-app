@@ -54,15 +54,19 @@ def comparar(serie, desde, hasta, modo):
     graficos = []
     for campo, titulo in especificaciones:
         fig = px.line(serie, x="fecha", y=campo, color="etiqueta", title=titulo,
-                      color_discrete_sequence=marca.paleta())
+                      color_discrete_sequence=marca.paleta(),
+                      facet_row="moneda" if campo == "patrimonio" else None)
         fig.update_traces(connectgaps=False)
+        if campo == "patrimonio":
+            fig.update_yaxes(matches=None)
         fig.update_xaxes(range=[desde, hasta])
         fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
         graficos.append(fig)
     resumen = serie.groupby(["etiqueta", "moneda"], sort=False).agg(
         Desde=("fecha", "min"), Hasta=("fecha", "max"), Datos=("fecha", "count"),
         inicial=("cuotaparte", "first"), final=("cuotaparte", "last"),
-        Patrimonio=("patrimonio", lambda s: s.iloc[-1])).reset_index()
+        **{"Último valor de patrimonio": ("patrimonio", lambda s: s.iloc[-1]),
+           "Fecha del patrimonio": ("fecha", "max")}).reset_index()
     resumen["Rendimiento %"] = (resumen.pop("final") / resumen.pop("inicial") - 1) * 100
     return serie, resumen.rename(columns={"etiqueta": "Clase", "moneda": "Moneda"}), graficos
 
@@ -122,8 +126,17 @@ def base_100(ser, desde, hasta=None):
     if hasta is not None:
         s = s[s["fecha"] <= hasta]
     s = s.sort_values(["codigo_cafci", "fecha"]).copy()
-    s["base 100"] = s.groupby("codigo_cafci")["cuotaparte"].transform(lambda x: x / x.iloc[0] * 100)
+    def normalizar(valores):
+        validos = pd.to_numeric(valores, errors="coerce")
+        validos = validos.where((validos > 0) & (validos < float("inf")))
+        return validos / validos.dropna().iloc[0] * 100 if validos.notna().any() else validos
+    s["base 100"] = s.groupby("codigo_cafci")["cuotaparte"].transform(normalizar)
     return s
+
+
+def historia_insuficiente(serie):
+    """Alguna clase tiene menos de dos cuotapartes válidas para mostrar evolución."""
+    return serie.empty or bool((serie.groupby("codigo_cafci")["base 100"].count() < 2).any())
 
 
 def clases_sin_cobertura(ser, desde, hasta):

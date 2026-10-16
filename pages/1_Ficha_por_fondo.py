@@ -128,14 +128,14 @@ else:
         if seguido or puntual is not None:
             historia = datos.serie(sel["codigo_cafci"]) if seguido else puntual["serie"]
             ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
-            if ser["fecha"].nunique() < 2:
-                st.info("Todavía hay una sola fecha de cuotaparte: el gráfico aparece cuando se cargue la historia.")
-            else:
-                ser["base 100"] = ser.groupby("codigo_cafci")["cuotaparte"].transform(
-                    lambda s: s / s.iloc[0] * 100)
-                serie_pdf = ser
-                fig = px.line(ser, x="fecha", y="base 100", color="nombre",
-                              title="Evolución de la cuotaparte (base 100 en la primera fecha)")
+            ser = calculos.base_100(ser, ser["fecha"].min())
+            serie_pdf = ser
+            if calculos.historia_insuficiente(ser):
+                st.info("Historia insuficiente en alguna clase: se necesitan dos cuotapartes válidas para mostrar evolución.")
+            if ser["base 100"].notna().any():
+                fig = px.line(ser, x="fecha", y="base 100", color="nombre", markers=True,
+                              title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
+                fig.update_traces(connectgaps=False)
                 fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
                 st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
 

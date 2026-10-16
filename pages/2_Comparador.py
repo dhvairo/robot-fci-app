@@ -124,8 +124,8 @@ if modo in ("P", "R y P") and (ser.empty or ser.patrimonio.isna().any()):
     notas.append("Patrimonio no disponible en algunas fechas o clases; los huecos no se interpolan.")
 for nota in notas:
     st.warning(nota)
-tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta") if c in mostrar],
-                      enteros=[c for c in ("Datos", "Patrimonio") if c in mostrar],
+tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta", "Fecha del patrimonio") if c in mostrar],
+                      enteros=[c for c in ("Datos", "Último valor de patrimonio") if c in mostrar],
                       numeros={"Rendimiento %": 2} if "Rendimiento %" in mostrar else {})
 st.dataframe(tabla, hide_index=True, width="stretch")
 st.download_button("Descargar comparador en PDF",
