@@ -83,6 +83,90 @@ def guardar_preferencia(persona, clave, valor):
 CLASIFICACION_DESHABILITADA = "La clasificación por organización no está disponible."
 
 
+class RepositorioSeguimiento:
+    """U40, desconectado: registro y conector explícitos del servidor, nunca formulario.
+
+    Sin URL predeterminada ni caché. El conector futuro debe usar el rol acotado
+    de app o de operador; no reutilizar conexiones privilegiadas/productivas.
+    """
+    def __init__(self, registro=None, conectar=None):
+        self.registro = dict(registro or {})
+        self.conectar = conectar
+
+    def _operar(self, par, funcion):
+        import acceso
+        try:
+            contexto = acceso.requerir_contexto_seguimiento(self.registro)
+            if tuple(par) != (contexto['organizacion'], contexto['dueno']):
+                raise calculos.ErrorSeguimiento('DUENO_AJENO')
+            if self.conectar is None:
+                raise calculos.ErrorSeguimiento('PERSISTENCIA_NO_CONFIGURADA')
+            with self.conectar() as conn:
+                conn.execute("select set_config('seguimiento.organizacion', %s, true), "
+                             "set_config('seguimiento.dueno', %s, true), "
+                             "set_config('seguimiento.usuario', %s, true), "
+                             "set_config('seguimiento.rol', %s, true), "
+                             "set_config('seguimiento.version_clave', %s, true)",
+                             tuple(contexto[k] for k in
+                                   ('organizacion', 'dueno', 'usuario', 'rol', 'version_clave')))
+                resultado = funcion(conn, contexto)
+            return resultado  # Solo después del commit, incluso si este falla.
+        except calculos.ErrorSeguimiento:
+            raise
+        except Exception:
+            raise calculos.ErrorSeguimiento('PERSISTENCIA_FALLIDA') from None
+
+    @staticmethod
+    def _leer(conn, contexto):
+        estado = conn.execute('select seguimiento_privado.leer(%s, %s)',
+                              (contexto['organizacion'], contexto['dueno'])).fetchone()[0]
+        return calculos._filas_seguimiento(estado, contexto)
+
+    def leer(self, par):
+        return self._operar(par, self._leer)
+
+    def transaccion(self, par, funcion):
+        from copy import deepcopy
+        from psycopg.types.json import Jsonb
+
+        def anotar(conn, contexto):
+            conn.execute('select seguimiento_privado.bloquear(%s, %s)', tuple(par))
+            anterior = self._leer(conn, contexto)
+            estado = deepcopy(anterior)
+            resultado = funcion(estado)
+            # El protocolo U37 anota un único pedido; no admite escrituras arbitrarias.
+            nuevos = estado['pedidos'][len(anterior['pedidos']):]
+            if (estado['elecciones'] != anterior['elecciones']
+                    or estado['textos'] != anterior['textos']
+                    or estado['pedidos'][:len(anterior['pedidos'])] != anterior['pedidos']
+                    or len(nuevos) > 1):
+                raise calculos.ErrorSeguimiento('TRANSICION_INVALIDA')
+            if nuevos:
+                guardado = conn.execute('select seguimiento_privado.solicitar(%s, %s, %s::jsonb)',
+                                        (*par, Jsonb(nuevos[0]))).fetchone()[0]
+                if guardado != resultado:
+                    raise calculos.ErrorSeguimiento('RESPUESTA_INVALIDA')
+            elif resultado not in anterior['pedidos']:
+                raise calculos.ErrorSeguimiento('TRANSICION_INVALIDA')
+            return resultado
+
+        return self._operar(par, anotar)
+
+    def confirmar(self, par, clave, preparado=False):
+        """Entrada reservada al futuro operador SQL, sin llamadas desde pantallas."""
+        if not isinstance(clave, str) or not clave.strip() or type(preparado) is not bool:
+            raise calculos.ErrorSeguimiento('CONFIRMACION_INVALIDA')
+        def confirmar(conn, contexto):
+            estado = conn.execute('select seguimiento_privado.confirmar(%s, %s, %s, %s)',
+                                  (*par, clave, preparado)).fetchone()[0]
+            calculos._filas_seguimiento(estado, contexto)
+            if not any(p['clave'] == clave and p['estado'] == 'listo' for p in estado['pedidos']):
+                raise calculos.ErrorSeguimiento('CONFIRMACION_INVALIDA')
+            return estado
+
+        return self._operar(par, confirmar)
+
+
 def _contexto_clasificacion(persona=None, escritura=False):
     """Auth central revalidado; ninguna identidad procede de parámetros SQL del cliente."""
     import acceso
