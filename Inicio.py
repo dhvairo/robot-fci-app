@@ -19,6 +19,7 @@ import operacion  # noqa: E402
 import formato  # noqa: E402
 import horarios  # noqa: E402
 import navegacion  # noqa: E402
+import estilo  # noqa: E402
 
 st.set_page_config(page_title=marca.nombre(), page_icon="📈", layout="wide")
 
@@ -107,4 +108,5 @@ def mostrar_inicio():
                "no es una recomendación de inversión.")
 
 
-navegacion.mostrar(mostrar_inicio)
+_hoja_estilo = st.empty()
+estilo.presentar(_hoja_estilo, lambda: navegacion.mostrar(mostrar_inicio))

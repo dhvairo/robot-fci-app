@@ -1,0 +1,8 @@
+# Tema inicial; la organización completa el estilo desde app/estilo.py.
+[theme]
+base = "light"
+primaryColor = "#2457c5"
+backgroundColor = "#fbf6ef"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#2b2622"
+font = "sans serif"

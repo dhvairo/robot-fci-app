@@ -10,12 +10,9 @@ VACIO = "—"
 
 
 def estilo_boton_serie(codigo, color, visible):
-    """CSS limitado al botón CAFCI; el color proviene de la paleta de marca."""
-    return (f"<style>.st-key-comparador_serie_{int(codigo)} button {{"
-            f"border: 2px solid {color}; color: {color};"
-            f"opacity: {1 if visible else 0.5};"
-            f"text-decoration: {'none' if visible else 'line-through'};"
-            "}</style>")
+    """Compatibilidad para consumidores; la presentación vive en estilo."""
+    from estilo import regla_boton_serie
+    return regla_boton_serie(codigo, color, visible)
 
 
 def _es_nulo(x):

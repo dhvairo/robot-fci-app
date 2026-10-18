@@ -11,6 +11,7 @@ import calculos  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
 import filtros  # noqa: E402
+import marca  # noqa: E402
 import informe  # noqa: E402
 import consulta_puntual  # noqa: E402
 import pandas as pd
@@ -150,9 +151,8 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
 
 
 # Colores de la torta; cada uno tiene su cuadradito de color para el botón del mismo rubro.
-PALETA = [("🔴", "#E04B4B"), ("🟠", "#F28E2B"), ("🟡", "#EDC948"), ("🟢", "#59A14F"), ("🔵", "#4E79A7"),
-          ("🟣", "#B07AA1"), ("🟤", "#9C755F"), ("⚫", "#444444")]
-GRIS = ("⚪", "#BAB0AC")
+PALETA = marca.COLORES_RUBROS
+GRIS = marca.RUBRO_GRIS
 
 st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide")
 acceso.requerir()

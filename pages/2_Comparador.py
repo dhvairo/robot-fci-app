@@ -92,8 +92,6 @@ mostrar = sel[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "mone
 controles = calculos.controles_series(st.session_state, sel)
 st.caption("Series del gráfico: tocá un botón para ocultar o mostrar su línea.")
 for control in controles:
-    st.markdown(formato.estilo_boton_serie(control["codigo"], control["color"], control["visible"]),
-                unsafe_allow_html=True)
     st.button(control["nombre"], key=f"comparador_serie_{control['codigo']}",
               help="Encendida" if control["visible"] else "Apagada",
               on_click=calculos.alternar_serie, args=(st.session_state, control["codigo"]))
