@@ -10,6 +10,114 @@ from uuid import UUID, uuid4
 import streamlit as st
 
 
+# Configuración exclusiva del servidor. U46 no instala backend ni registro productivos.
+LECTURA_SEGUIMIENTO = {"activa": False, "backend": None, "registro": {}}
+
+
+def lector_seguimiento():
+    """Backend del servidor y contexto revalidado; conexión diferida por operación.
+
+    Apagado conserva los lectores anteriores; activo incompleto rechaza.
+    El registro es organización -> dueño colectivo, nunca un valor de pantalla.
+    """
+    configuracion = configuracion_seguimiento()
+    backend = configuracion.get("backend")
+    if configuracion.get("activa") is not True:
+        return None
+    registro = dict(configuracion.get("registro") or {})
+    return backend, lambda: requerir_contexto_seguimiento(registro)
+
+
+def configuracion_seguimiento():
+    """Puente servidor; configuración activa inválida nunca recupera el legado."""
+    import calculos
+    try:
+        c = LECTURA_SEGUIMIENTO
+        if c == {"activa": False, "backend": None, "registro": {}}:
+            c = secreto('seguimiento_privado')
+            if c is None:
+                return LECTURA_SEGUIMIENTO
+        if c.get('activa', False) is False:
+            return LECTURA_SEGUIMIENTO if c is not LECTURA_SEGUIMIENTO else c
+        if c.get('activa') is not True:
+            raise ValueError()
+        if c.get('backend') is not None:
+            registro = dict(c['registro'])
+            if not callable(c['backend'].leer):
+                raise ValueError()
+        else:
+            import psycopg
+            from datos import RepositorioSeguimiento
+            c = dict(c)
+            if c.get('organizacion') != 'propia' or c.get('dueno') != 'equipo':
+                raise ValueError()
+            for k in ('host', 'dbname', 'user', 'password'):
+                if not isinstance(c.get(k), str) or not c[k].strip() or 'REEMPLAZAR' in c[k]:
+                    raise ValueError()
+            if (not re.fullmatch(r'seguimiento_app_login(?:\.[A-Za-z0-9_-]+)?', c['user'])
+                    or c.get('sslmode') != 'require'
+                    or type(c.get('port')) is not int or not 1 <= c['port'] <= 65535
+                    or type(c.get('connect_timeout')) is not int or not 1 <= c['connect_timeout'] <= 30):
+                raise ValueError()
+            opciones = {k: c[k] for k in ('host','port','dbname','user','password','sslmode','connect_timeout')}
+            registro = {'propia': 'equipo'}
+            def conectar():
+                if os.environ.get('ROBOT_FCI_SIN_RED') == '1':
+                    raise calculos.ErrorSeguimiento('CONEXION_DESHABILITADA')
+                return psycopg.connect(**opciones)
+            c['backend'] = RepositorioSeguimiento(registro, conectar)
+            c['registro'] = registro
+        if any(not isinstance(k, str) or not k.strip()
+                               or not isinstance(v, str) or not v.strip() for k, v in registro.items()):
+            raise ValueError()
+        return c
+    except Exception:
+        raise calculos.ErrorSeguimiento('Configuración de seguimiento privado inválida o incompleta.') from None
+
+
+def formulario_seguimiento(codigo, renovar=False):
+    """Versiones del formulario mostrado, estables entre render y envío."""
+    import calculos
+    lector = lector_seguimiento()
+    if lector is None:
+        return None
+    backend, resolver = lector
+    contexto = calculos._contexto_seguimiento(resolver)
+    identidad = tuple(contexto[k] for k in ('organizacion', 'dueno', 'usuario', 'rol', 'version_clave'))
+    formularios = st.session_state.setdefault('seguimiento_privado_formularios', {})
+    clave = (identidad, int(codigo))
+    if renovar:
+        formularios.pop(clave, None)
+    if clave not in formularios:
+        formularios[clave] = calculos.versiones_formulario_seguimiento(
+            int(codigo), backend, lambda: contexto)
+        formularios[clave]['clave'] = str(uuid4())
+    return dict(formularios[clave])
+
+
+def escribir_seguimiento(catalogo, formulario):
+    """Única salida privada de escritura; nunca continúa por el legado al fallar."""
+    import calculos
+    lector = lector_seguimiento()
+    if lector is None:
+        raise calculos.ErrorSeguimiento('BACKEND_AUSENTE')
+    backend, resolver = lector
+    pedido = calculos.solicitar_seguimiento(catalogo, backend, formulario, resolver)
+    # Solo después del commit confirmado. La caché común de Streamlit no se toca.
+    for clave in list(st.session_state):
+        if clave.startswith('seguimiento_privado_'):
+            del st.session_state[clave]
+    return pedido
+
+
+def listar_seguimiento():
+    import calculos
+    lector = lector_seguimiento()
+    if lector is None:
+        raise calculos.ErrorSeguimiento('BACKEND_AUSENTE')
+    return calculos.pedidos_seguimiento(*lector)
+
+
 class ErrorAcceso(Exception):
     """Mensaje fijo y seguro: nunca incluye respuestas ni secretos de Auth."""
 
@@ -77,14 +185,24 @@ def _validar_sesion():
     sesion = st.session_state.get("auth")
     if not sesion:
         raise ErrorAcceso("Ingresá con tu usuario.")
-    if time.time() >= sesion["vence"] - 60:
-        nueva = _api("POST", "token?grant_type=refresh_token", {"refresh_token": sesion["refresh_token"]})
-        sesion.update(access_token=nueva["access_token"], refresh_token=nueva["refresh_token"],
-                      vence=time.time() + nueva.get("expires_in", 3600))
-    persona = _identidad(_api("GET", "user", token=sesion["access_token"]))
+    try:
+        if time.time() >= sesion["vence"] - 60:
+            nueva = _api("POST", "token?grant_type=refresh_token", {"refresh_token": sesion["refresh_token"]})
+            sesion.update(access_token=nueva["access_token"], refresh_token=nueva["refresh_token"],
+                          vence=time.time() + nueva.get("expires_in", 3600))
+        persona = _identidad(_api("GET", "user", token=sesion["access_token"]))
+    except (ErrorAcceso, KeyError, TypeError, ValueError, AttributeError):
+        # Un token rechazado no puede conservar informes o selecciones de su dueño.
+        st.session_state.clear()
+        raise ErrorAcceso("La sesión ya no está autorizada. Volvé a ingresar.") from None
     if persona["version_clave"] != sesion["persona"]["version_clave"]:
         cerrar_sesion()
         raise ErrorAcceso("Tu clave fue restablecida. Volvé a ingresar.")
+    campos = ("id", "organizacion", "rol", "cambio_obligatorio")
+    if any(persona.get(k) != sesion["persona"].get(k) for k in campos):
+        # Conservar únicamente la sesión revalidada; ningún resultado del contexto anterior.
+        st.session_state.clear()
+        st.session_state["auth"] = sesion
     sesion["persona"] = persona
     return persona
 
@@ -283,6 +401,12 @@ def _pantalla_usuarios():
 def requerir():
     """Único control de todas las pantallas; exige cambiar la clave antes de mostrar datos."""
     import marca
+    import calculos
+    try:
+        configuracion_seguimiento()
+    except calculos.ErrorSeguimiento as error:
+        st.error(str(error))
+        st.stop()
     if (not str(secreto("SUPABASE_URL") or "").startswith("https://")
             or not secreto("SUPABASE_ANON_KEY") or not secreto("SUPABASE_SERVICE_KEY")):
         st.error("Falta configurar el acceso de usuarios: SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_KEY. Consultá al administrador.")

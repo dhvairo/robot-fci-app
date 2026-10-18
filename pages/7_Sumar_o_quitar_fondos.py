@@ -37,7 +37,10 @@ def anotar(codigo, nombre, accion, descripcion=None, idea=None, id_ficha=None):
         st.error(error)
         return
     try:
-        numero = datos.anotar_pedido(codigo, accion, pedido["descripcion"], pedido["idea"], pedido["id_ficha"])
+        opciones = {'formulario': formulario_privado} if formulario_privado is not None else {}
+        # En privado conservar vacío/omitido: validar_pedido normaliza vacío a None.
+        textos = (descripcion, idea) if formulario_privado is not None else (pedido['descripcion'], pedido['idea'])
+        numero = datos.anotar_pedido(codigo, accion, *textos, pedido["id_ficha"], **opciones)
     except datos.ErrorPedido as e:
         st.error(str(e))
         return
@@ -47,6 +50,7 @@ def anotar(codigo, nombre, accion, descripcion=None, idea=None, id_ficha=None):
     st.rerun()
 
 
+formulario_privado = None
 catalogo = datos.catalogo_fondos()
 pedidos = calculos.preparar_pedidos(datos.pedidos_recientes())
 
@@ -125,6 +129,18 @@ else:
 if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
     codigo = st.session_state["fondo_elegido"]
     f = por_codigo.loc[codigo]
+    try:
+        formulario_privado = acceso.formulario_seguimiento(codigo)
+    except calculos.ErrorSeguimiento:
+        st.error('No se pudo preparar el formulario de tu organización.')
+        st.stop()
+    if formulario_privado is not None and st.button('Revisar versión y actualizar formulario'):
+        try:
+            acceso.formulario_seguimiento(codigo, renovar=True)
+        except calculos.ErrorSeguimiento:
+            st.error('No se pudo actualizar la versión del formulario.')
+            st.stop()
+        st.rerun()
     st.subheader(f["nombre"])
     st.caption(f"{f['gerente'] or '—'} · {calculos.NOMBRE_MONEDA.get(f['moneda'], f['moneda'])} · "
                f"{formato.texto_o_guion(f['tipo_fondo'])} · Rubro: {formato.texto_o_guion(f['rubro'])}")
@@ -157,7 +173,8 @@ if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
                                        max_chars=calculos.MAX_DESCRIPCION)
             idea = st.text_area("Idea y temática", value=f["tematica"] or "", max_chars=calculos.MAX_IDEA)
             st.caption("Leé el factsheet del fondo y copiá el texto de objetivo/política de inversión")
-            st.caption("Gana lo último que se cargó. Si dejás un campo vacío, se borra.")
+            st.caption("Si dejás un campo vacío, se borra. Los cambios simultáneos requieren revisar la versión."
+                       if formulario_privado is not None else "Gana lo último que se cargó. Si dejás un campo vacío, se borra.")
             if st.form_submit_button("Guardar descripción y temática", disabled=hay_pendiente):
                 anotar(codigo, f["nombre"], "editar_tematica", descripcion, idea)
         if st.button("Dejar de seguir este fondo", key=f"dejar_{codigo}", disabled=hay_pendiente):
@@ -186,13 +203,21 @@ else:
         st.caption("Estos pedidos quedaron con problema porque el robot no pudo encontrar o validar la ficha del fondo en la "
                    "CNV. Buscá el fondo en la web de la CNV (Fondos Comunes de Inversión): el ID es el número que figura en "
                    "la dirección de su ficha. Se anota un pedido nuevo con ese ID (el original queda como está).")
+        try:
+            formularios_reintento = {int(c): acceso.formulario_seguimiento(int(c))
+                                    for c in reintentables['codigo_cnv'].unique()}
+        except calculos.ErrorSeguimiento:
+            st.error('No se pudo preparar el formulario de tu organización.')
+            st.stop()
         with st.form("reintentar"):
             elegido = st.selectbox("Pedido con problema", list(reintentables.index), key="reintento",
                                    format_func=lambda i: f"Pedido {reintentables.loc[i, 'Pedido']}: {reintentables.loc[i, 'Fondo']}")
+            formulario_reintento = formularios_reintento[int(reintentables.loc[elegido, 'codigo_cnv'])]
             id_nuevo = st.text_input("ID de la ficha CNV", placeholder="Por ejemplo: 63491")
             if st.form_submit_button("Reintentar con este ID"):
                 if not id_nuevo.strip():
                     st.error("Escribí el ID de la ficha CNV.")
                 else:
                     p = reintentables.loc[elegido]
+                    formulario_privado = formulario_reintento
                     anotar(int(p["codigo_cnv"]), p["Fondo"], "seguir", p["descripcion_breve"], p["idea_tematica"], id_nuevo)

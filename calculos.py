@@ -834,6 +834,30 @@ def componer_seguimiento(catalogo, repositorio, resolver=None):
         raise ErrorSeguimiento("LECTURA_FALLIDA") from None
 
 
+def lectura_seguimiento_activa():
+    from acceso import lector_seguimiento
+    return lector_seguimiento() is not None
+
+
+def seguimiento_para_consulta(catalogo):
+    """Compone un DataFrame fuera de la caché común; sin backend devuelve el original.
+
+    Los errores rechazan la consulta completa: nunca recuperan textos/elecciones
+    globales. Conserva índice, columnas y atributos usados por clasificación.
+    """
+    from acceso import lector_seguimiento
+    lector = lector_seguimiento()
+    if lector is None:
+        return catalogo
+    backend, resolver = lector
+    filas = componer_seguimiento(catalogo.to_dict('records'), backend, resolver)
+    salida = catalogo.copy(deep=True)
+    for campo in ('seguido', 'descripcion_breve', 'tematica', 'tematica_provisoria'):
+        salida[campo] = pd.Series([fila[campo] for fila in filas], index=salida.index,
+                                  dtype=bool if campo == 'seguido' else object)
+    return salida
+
+
 def pedidos_seguimiento(repositorio, resolver=None):
     """Pedidos de todos los autores del par autorizado, sin caché ni filtro personal."""
     contexto = _contexto_seguimiento(resolver)
@@ -844,6 +868,33 @@ def pedidos_seguimiento(repositorio, resolver=None):
         raise
     except Exception:
         raise ErrorSeguimiento("LECTURA_FALLIDA") from None
+
+
+def versiones_formulario_seguimiento(codigo, repositorio, resolver):
+    contexto = _contexto_seguimiento(resolver)
+    try:
+        estado = _filas_seguimiento(repositorio.leer(_par_seguimiento(contexto)), contexto)
+        return {campo: next((f.get('version', 0) for f in estado[tabla]
+                             if f['codigo_cnv'] == codigo), 0)
+                for campo, tabla in [('version_esperada', 'elecciones'),
+                                     ('version_textos_esperada', 'textos')]}
+    except ErrorSeguimiento:
+        raise
+    except Exception:
+        raise ErrorSeguimiento('LECTURA_FALLIDA') from None
+
+
+def tabla_pedidos_seguimiento(pedidos, catalogo, limite):
+    """Adapta el contrato privado a la presentación existente, incluso sin pedidos."""
+    nombres = {f['codigo_cnv']: f.get('nombre') for f in catalogo}
+    columnas = ['id', 'codigo_cnv', 'fondo', 'accion', 'descripcion_breve', 'idea_tematica',
+                'id_ficha_cnv', 'estado', 'motivo', 'pedido_en', 'procesado_en']
+    filas = [dict(id=i, codigo_cnv=p['codigo_cnv'], fondo=nombres.get(p['codigo_cnv']),
+                  accion=p['accion'], descripcion_breve=p.get('descripcion'),
+                  idea_tematica=p.get('idea'), id_ficha_cnv=p.get('id_ficha'),
+                  estado=p['estado'], motivo=p.get('motivo'), pedido_en=p.get('pedido_en'),
+                  procesado_en=p.get('procesado_en')) for i, p in enumerate(pedidos, 1)]
+    return pd.DataFrame(filas, columns=columnas).tail(limite).iloc[::-1]
 
 
 def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):

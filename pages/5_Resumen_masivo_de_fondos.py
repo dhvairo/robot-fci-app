@@ -74,7 +74,7 @@ st.markdown("**Notas:**\n\n" + "\n".join(f"- {n}" for n in calculos.NOTAS_RESUME
 
 # ───────── El informe: una sección por moneda ─────────
 st.divider()
-secs = informe.secciones(tabla)
+secs = informe.secciones(tabla, fondos=sel)
 st.header("Informe")
 st.download_button("Descargar informe en PDF", data=informe.pdf(secs), file_name=informe.nombre_archivo(secs, tabla),
                    mime="application/pdf", type="primary")

@@ -137,7 +137,7 @@ tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta", "Fecha del 
                       numeros={"Rendimiento %": 2} if "Rendimiento %" in mostrar else {})
 st.dataframe(tabla, hide_index=True, width="stretch")
 st.download_button("Descargar comparador en PDF",
-                   data=informe.pdf_comparador(serie_pdf, tabla, modo, notas),
+                   data=informe.pdf_comparador(serie_pdf, tabla, modo, notas, fondos=fondos),
                    file_name="comparador.pdf", mime="application/pdf")
 st.caption("Rendimientos sobre la cuotaparte, sin considerar distribución de utilidades.")
 st.caption(marca.actual()["texto_legal"])

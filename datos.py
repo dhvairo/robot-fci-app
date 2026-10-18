@@ -283,11 +283,29 @@ def vista_carteras():
 
 
 def fondos_ficha(incluir_no_seguidos=False):
-    comunes = _fondos_ficha_comunes(incluir_no_seguidos)
+    try:
+        privada = calculos.lectura_seguimiento_activa()
+    except calculos.ErrorSeguimiento:
+        st.error('No se pudo leer el seguimiento de tu organización. Consulta rechazada.')
+        st.stop()
+        raise
+    comunes = _fondos_ficha_comunes(True if privada else incluir_no_seguidos)
     vista = vista_carteras()
     salida = calculos.catalogo_efectivo(comunes, vista)
+    salida = _seguimiento_para_consulta(salida)
+    if privada and not incluir_no_seguidos:
+        salida = salida[salida['seguido']].copy()
     salida.attrs['clasificacion'] = vista
     return salida
+
+
+def _seguimiento_para_consulta(catalogo):
+    try:
+        return calculos.seguimiento_para_consulta(catalogo)
+    except calculos.ErrorSeguimiento:
+        st.error('No se pudo leer el seguimiento de tu organización. Consulta rechazada.')
+        st.stop()
+        raise  # También rechaza si un doble de pantalla no detiene la ejecución.
 
 
 def resumen_carteras(vista=None):
@@ -598,8 +616,13 @@ def _url_pedidos():
     return v or os.environ.get("PEDIDOS_DB_URL") or _url()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def catalogo_fondos():
+    """Lectura privada fuera de la caché compartida del catálogo actual."""
+    return _seguimiento_para_consulta(_catalogo_fondos_comun())
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _catalogo_fondos_comun():
     """Todos los fondos del catálogo (seguidos o no) para el buscador de "Sumar o quitar fondos"."""
     return _ejecutar(
         "select f.codigo_cnv, f.nombre, f.moneda, f.seguido, f.id_ficha_web, f.tipo_fondo, f.rubro, "
@@ -610,15 +633,39 @@ def catalogo_fondos():
 
 def pedidos_recientes(limite=60):
     """Los últimos pedidos con su estado. Sin caché: tiene que verse enseguida lo que se acaba de pedir."""
+    import acceso
+    if acceso.lector_seguimiento() is not None:
+        try:
+            return calculos.tabla_pedidos_seguimiento(acceso.listar_seguimiento(),
+                _catalogo_fondos_comun().to_dict('records'), limite)
+        except calculos.ErrorSeguimiento:
+            st.error('No se pudieron leer los pedidos de tu organización.')
+            st.stop()
+            raise
     return _ejecutar(
         "select p.id, p.codigo_cnv, f.nombre as fondo, p.accion, p.descripcion_breve, p.idea_tematica, "
         "p.id_ficha_cnv, p.estado, p.motivo, p.pedido_en, p.procesado_en from pedidos_fondos p "
         "left join fondos f using (codigo_cnv) order by p.id desc limit %s", (limite,))
 
 
-def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None):
+def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None, *, formulario=None):
     """Anota un pedido en `pedidos_fondos` (lo único que puede escribir la app, con el usuario de permiso mínimo).
     Devuelve el número del pedido."""
+    import acceso
+    if formulario is not None or acceso.lector_seguimiento() is not None:
+        try:
+            if formulario is None:
+                raise calculos.ErrorSeguimiento('FORMULARIO_AUSENTE')
+            solicitud = dict(formulario, codigo_cnv=int(codigo_cnv), accion=accion)
+            if accion != 'dejar':
+                solicitud.update({k: v for k, v in [('descripcion', descripcion), ('idea', idea)]
+                                  if v is not None})
+            if id_ficha is not None:
+                solicitud['id_ficha'] = id_ficha
+            pedido = acceso.escribir_seguimiento(_catalogo_fondos_comun().to_dict('records'), solicitud)
+            return pedido['clave']
+        except calculos.ErrorSeguimiento as e:
+            raise ErrorPedido('Pedido no confirmado: ' + str(e)) from None
     url = _url_pedidos()
     if not url:
         raise ErrorPedido("Falta PEDIDOS_DB_URL o APP_DB_URL (archivo .env o secretos de la app): no se puede anotar el pedido.")

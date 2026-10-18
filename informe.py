@@ -35,8 +35,27 @@ def rubros_principales(fila):
     return out
 
 
-def secciones(tabla):
+def _fondos_pdf(fondos):
+    """Revalida y compone fuera de toda caché; un fallo detiene la descarga."""
+    import calculos
+    if not calculos.lectura_seguimiento_activa():
+        return fondos
+    import datos
+    return datos._seguimiento_para_consulta(fondos)
+
+
+def secciones(tabla, fondos=None):
     """Una sección por moneda con fondos (pesos primero, después dólares). `tabla` es la de `calculos.resumen_masivo`."""
+    import calculos
+    if calculos.lectura_seguimiento_activa():
+        if fondos is None:
+            raise calculos.ErrorSeguimiento('FONDOS_PDF_AUSENTES')
+        propios = _fondos_pdf(fondos).set_index('codigo_cnv')
+        tabla = tabla.copy(deep=True)
+        tabla['_idea_pdf'] = tabla['_codigo'].map(propios.tematica).map(calculos._texto)
+        tabla['_idea'] = tabla['_codigo'].map(
+            {codigo: calculos.tematica(f.to_dict())[1] for codigo, f in propios.iterrows()})
+        tabla['Descripción breve'] = tabla['_codigo'].map(propios.descripcion_breve).map(calculos._texto)
     out = []
     for clave, texto, codigos in MONEDAS:
         t = tabla[tabla["_moneda"].isin(codigos)]
@@ -228,6 +247,8 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
     from reportlab.graphics.charts.piecharts import Pie
     from reportlab.lib import colors
 
+    if calculos.lectura_seguimiento_activa():
+        fondo = _fondos_pdf(pd.DataFrame([fondo])).iloc[0].to_dict()
     contenido = [f"Código CNV {fondo['codigo_cnv']} · {formato.texto_o_guion(fondo.get('estado'))}"]
     contenido += [f"{etiqueta}: {valor}" for etiqueta, valor in calculos.cabecera_fondo(fondo)]
     contenido += ["Descripción breve: " + formato.texto_o_guion(fondo.get("descripcion_breve")),
@@ -306,13 +327,23 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
     return pdf([{"titulo": fondo["nombre"], "contenido": contenido}], titulo_documento=f"Ficha: {fondo['nombre']}")
 
 
-def pdf_comparador(serie, tabla, modo, notas=()):
+def pdf_comparador(serie, tabla, modo, notas=(), *, fondos=None):
     """Gráficos vectoriales de línea y selección; estilo y marca de Informe/Ficha."""
     from reportlab.graphics import shapes
     from reportlab.lib import colors
     import pandas as pd
 
     contenido = [f"Comparación: {modo}", *notas]
+    import calculos
+    if calculos.lectura_seguimiento_activa():
+        if fondos is None:
+            raise calculos.ErrorSeguimiento('FONDOS_PDF_AUSENTES')
+        propios = _fondos_pdf(fondos)
+        textos = propios[['nombre', 'descripcion_breve', 'tematica', 'seguido']].copy()
+        textos.columns = ['Fondo', 'Descripción breve', 'Idea y temática', 'Seguido']
+        textos['Seguido'] = textos['Seguido'].map({True: 'Sí', False: 'No'})
+        textos = textos.fillna(formato.VACIO)
+        contenido.append(('Seguimiento de la organización', textos))
     campos = []
     if modo in ("R", "R y P"):
         campos.append(("base 100", "Rendimiento (base 100)"))
