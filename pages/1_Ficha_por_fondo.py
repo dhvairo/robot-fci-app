@@ -166,6 +166,7 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
     fila = elegidas[0] if elegidas else None
     if fila is None:
         st.session_state.pop(clave, None)
+        st.session_state.pop(clave + '_lote_seleccion', None)
         return
     if fila['bloqueo']:
         motivo = fila['bloqueo']
