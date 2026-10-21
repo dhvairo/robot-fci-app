@@ -10,6 +10,7 @@ import calculos  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
 import filtros  # noqa: E402
+import rapidez  # noqa: E402
 
 st.set_page_config(page_title="Gestión y eficiencia", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -82,25 +83,20 @@ def armar(df, extra):
     return out[[*PRINCIPALES.values(), *extra, *INFORMACION.values(), "Estado"]]
 
 
-def mostrar(df, numeros_extra=None, enteros_extra=()):
-    estilo = formato.tabla_ordenable(
+def estilizar(df, numeros_extra=None, enteros_extra=()):
+    return formato.tabla_ordenable(
         df, numeros={"Rendimiento 12 meses (%)": 2, **(numeros_extra or {})},
         enteros=["Patrimonio", *enteros_extra], cortos={c: (2, 4) for c in CORTOS if c in df.columns})
-    st.dataframe(estilo, hide_index=True, width="stretch")
 
 
-if not activa:
-    st.subheader(f"Clases ({formato.entero(len(clases))})")
-    st.caption("Ordenadas de mayor a menor honorario de la sociedad gerente. Tocá el encabezado de cualquier columna "
-               "para reordenar. Los demás costos son solo informativos.")
-    t = armar(clases.assign(**{"Tipo de fondo": clases["tipo_fondo"]}), ["Tipo de fondo"])
-    mostrar(t)
-else:
+def construir():
+    """Tablas y ranking de la selección actual; se memorizan para que un clic igual no los recalcule."""
+    if not activa:
+        t = armar(clases.assign(**{"Tipo de fondo": clases["tipo_fondo"]}), ["Tipo de fondo"])
+        return dict(estilo=estilizar(t), cantidad=len(clases))
     ranking, afuera = calculos.ejecutar_eficiencia(clases)
-    st.subheader(f"Ranking de eficiencia ({formato.entero(len(ranking))} clases comparadas)")
-    if ranking.empty:
-        st.warning("Ninguna clase de las elegidas se puede comparar (mirá los motivos más abajo).")
-    else:
+    salida = dict(cantidad=len(ranking), estilo=None, afuera=len(afuera), motivos=None, tabla_afuera=None)
+    if not ranking.empty:
         ranking = ranking.assign(**{
             "Puntaje de eficiencia (0-100)": ranking["puntaje"], "Posición": ranking["posicion"],
             "Grupo de comparación": ranking["grupo"] + " (" + ranking["en_grupo"].astype(str) + " clases)"})
@@ -108,17 +104,35 @@ else:
         if ranking["marca"].ne("").any():
             ranking = ranking.assign(Marca=ranking["marca"].replace("", None))
             extra.append("Marca")
-        t = armar(ranking, extra)
+        salida["estilo"] = estilizar(armar(ranking, extra), numeros_extra={"Puntaje de eficiencia (0-100)": 1},
+                                     enteros_extra=["Posición"])
+    if not afuera.empty:
+        salida["motivos"] = afuera["motivo"].value_counts()
+        mostrado = afuera.rename(columns={"gerente": "Gerente", "clase": "Fondo y clase", "motivo": "Motivo"})
+        salida["tabla_afuera"] = formato.tabla(mostrado[["Gerente", "Fondo y clase", "Motivo"]])
+    return salida
+
+
+vista_tablas = rapidez.memorizar("gestion_tablas", construir, firma, activa)
+if not activa:
+    st.subheader(f"Clases ({formato.entero(vista_tablas['cantidad'])})")
+    st.caption("Ordenadas de mayor a menor honorario de la sociedad gerente. Tocá el encabezado de cualquier columna "
+               "para reordenar. Los demás costos son solo informativos.")
+else:
+    st.subheader(f"Ranking de eficiencia ({formato.entero(vista_tablas['cantidad'])} clases comparadas)")
+    if vista_tablas["estilo"] is None:
+        st.warning("Ninguna clase de las elegidas se puede comparar (mirá los motivos más abajo).")
+    else:
         st.caption("Ordenadas por puntaje. La posición es dentro de cada grupo (mismo tipo de fondo y moneda).")
-        mostrar(t, numeros_extra={"Puntaje de eficiencia (0-100)": 1}, enteros_extra=["Posición"])
-    st.subheader(f"Quedan afuera del ranking ({formato.entero(len(afuera))} clases)")
-    if afuera.empty:
+if vista_tablas["estilo"] is not None:
+    st.dataframe(vista_tablas["estilo"], hide_index=True, width="stretch")
+if activa:
+    st.subheader(f"Quedan afuera del ranking ({formato.entero(vista_tablas['afuera'])} clases)")
+    if vista_tablas["tabla_afuera"] is None:
         st.caption("Todas las clases de la tabla entran al ranking.")
     else:
-        resumen = afuera["motivo"].value_counts()
-        st.caption(" · ".join(f"{m}: {formato.entero(n)}" for m, n in resumen.items()))
-        mostrado = afuera.rename(columns={"gerente": "Gerente", "clase": "Fondo y clase", "motivo": "Motivo"})
-        st.dataframe(formato.tabla(mostrado[["Gerente", "Fondo y clase", "Motivo"]]), hide_index=True, width="stretch")
+        st.caption(" · ".join(f"{m}: {formato.entero(n)}" for m, n in vista_tablas["motivos"].items()))
+        st.dataframe(vista_tablas["tabla_afuera"], hide_index=True, width="stretch")
     st.markdown(
         "**Cómo se calculó**\n\n"
         "- Cada clase se compara **solo con las clases del mismo tipo de fondo y de la misma moneda** que están en la "

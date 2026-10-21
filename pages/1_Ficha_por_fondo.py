@@ -14,8 +14,16 @@ import filtros  # noqa: E402
 import marca  # noqa: E402
 import informe  # noqa: E402
 import consulta_puntual  # noqa: E402
+import rapidez  # noqa: E402
 import pandas as pd
 from copy import deepcopy
+
+def memorizar(clave, calcular, *seleccion):
+    """Lo derivado de datos propios de la sesión (consulta puntual) no se memoriza."""
+    if puntual is not None:
+        return calcular()
+    return rapidez.memorizar(clave, calcular, *seleccion)
+
 
 ETIQUETAS = dict(zip(calculos.CAMPOS_CLASIFICACION, ('Rubro', 'Categoría', 'Moneda', 'Indexación')))
 
@@ -214,6 +222,7 @@ rubros_pdf = pd.DataFrame()
 top_pdf = pd.DataFrame()
 costos_pdf = pd.DataFrame()
 notas_pdf = []
+clases_sel, rubros_sel = (), ()
 if puntual is not None:
     notas_pdf = [consulta_puntual.LEYENDA, *puntual["avisos"]]
 
@@ -238,6 +247,7 @@ else:
                               default=por_defecto["nombre"].tolist(),
                               help="Por defecto Clase A y B; si el fondo no las tiene, las disponibles.")
     sel = clases[clases["nombre"].isin(elegidas)]
+    clases_sel = tuple(elegidas)
     if len(sel):
         if seguido:
             rend = datos.rendimientos_ultimos(sel["codigo_cafci"])
@@ -277,17 +287,23 @@ else:
 
         if seguido or puntual is not None:
             historia = datos.serie(sel["codigo_cafci"]) if seguido else puntual["serie"]
-            ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
-            ser = calculos.base_100(ser, ser["fecha"].min())
+            def armar_serie():
+                ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
+                ser = calculos.base_100(ser, ser["fecha"].min())
+                fig = None
+                if ser["base 100"].notna().any():
+                    fig = px.line(ser, x="fecha", y="base 100", color="nombre", markers=True,
+                                  title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
+                    fig.update_traces(connectgaps=False)
+                    fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
+                    fig = formato.plotly_es(fig, fechas_x=True)
+                return ser, fig
+            ser, fig = memorizar("ficha_serie", armar_serie, codigo, clases_sel)
             serie_pdf = ser
             if calculos.historia_insuficiente(ser):
                 st.info("Historia insuficiente en alguna clase: se necesitan dos cuotapartes válidas para mostrar evolución.")
-            if ser["base 100"].notna().any():
-                fig = px.line(ser, x="fecha", y="base 100", color="nombre", markers=True,
-                              title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
-                fig.update_traces(connectgaps=False)
-                fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-                st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
+            if fig is not None:
+                st.plotly_chart(fig, width="stretch")
 
 # ───────── Cartera ─────────
 st.subheader("Cartera semanal")
@@ -318,19 +334,21 @@ else:
     with g1:
         # Streamlit no deja tocar porciones de una torta: los rubros se eligen con los botones de abajo.
         elegidos = [r for r in (st.session_state.get(f"rubros_{codigo}") or []) if r in etiquetas]
+        rubros_sel = tuple(elegidos)
         colores = [m[1] if (not elegidos or r in elegidos) else m[1] + "40"
                    for m, r in zip(marcas, resumen["categoria_resumen"])]
-        fig = go.Figure(go.Pie(labels=resumen["categoria_resumen"], values=resumen["pct_pn"], hole=0.4, sort=False,
-                               marker=dict(colors=colores),
-                               pull=[0.08 if r in elegidos else 0 for r in resumen["categoria_resumen"]]))
-        fig.update_layout(title="Por rubro", margin=dict(t=50, b=10))
-        st.plotly_chart(formato.plotly_es(fig), width="stretch")
+        def armar_torta():
+            fig = go.Figure(go.Pie(labels=resumen["categoria_resumen"], values=resumen["pct_pn"], hole=0.4, sort=False,
+                                   marker=dict(colors=colores),
+                                   pull=[0.08 if r in elegidos else 0 for r in resumen["categoria_resumen"]]))
+            fig.update_layout(title="Por rubro", margin=dict(t=50, b=10))
+            return formato.plotly_es(fig)
+        st.plotly_chart(memorizar("ficha_torta", armar_torta, codigo, rubros_sel), width="stretch")
     det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
     det = det[det["pct_pn"] > 0].sort_values("pct_pn")
-    g2.plotly_chart(formato.plotly_es(px.bar(det, x="pct_pn", y="categoria_detallada", orientation="h",
-                                             title="Por rubro, moneda e indexación (% del PN)",
-                                             labels={"pct_pn": "% del PN", "categoria_detallada": ""})),
-                    width="stretch")
+    g2.plotly_chart(memorizar("ficha_barras", lambda: formato.plotly_es(px.bar(
+        det, x="pct_pn", y="categoria_detallada", orientation="h", title="Por rubro, moneda e indexación (% del PN)",
+        labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), width="stretch")
     st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
              list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
     st.caption(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio. Se muestran aparte porque restan.")
@@ -367,7 +385,7 @@ else:
                  column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})
 
 # El PDF recibe los mismos datos seleccionados y formateados que la pantalla.
-st.download_button("Descargar PDF", data=informe.pdf_ficha(
-    fondo.to_dict(), tabla_pdf, serie_pdf, rubros_pdf, top_pdf, notas_pdf,
-    costos_pdf),
-    file_name=f"FCI_Ficha_{codigo}.pdf", mime="application/pdf")
+rapidez.pdf_a_pedido(
+    "ficha", (codigo, clases_sel, rubros_sel, puntual is not None),
+    lambda: informe.pdf_ficha(fondo.to_dict(), tabla_pdf, serie_pdf, rubros_pdf, top_pdf, notas_pdf, costos_pdf),
+    f"FCI_Ficha_{codigo}.pdf", "Descargar PDF", memorizado=puntual is None)

@@ -13,6 +13,7 @@ import formato  # noqa: E402
 import filtros  # noqa: E402
 import informe  # noqa: E402
 import marca  # noqa: E402
+import rapidez  # noqa: E402
 
 st.set_page_config(page_title="Informe descriptivo", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -47,14 +48,15 @@ if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()
 sel = base[base.codigo_cnv.isin(elegidos)]
-carteras, sumas, tenencias = datos.resumen_carteras(vista)
+carteras, sumas, tenencias = rapidez.memorizar("resumen_carteras", lambda: datos.resumen_carteras(vista))
 sin_cartera = sorted(set(sel["nombre"]) - set(sel[sel["codigo_cnv"].isin(carteras["codigo_cnv"])]["nombre"]))
 if sin_cartera:
     st.warning("Todavía no tienen cartera cargada y no se incluyen: " + ", ".join(sin_cartera) + ".")
     sel = sel[~sel["nombre"].isin(sin_cartera)]
     if sel.empty:
         st.stop()
-tabla = calculos.resumen_masivo(sel, carteras, sumas, tenencias)
+seleccion = tuple(sel.codigo_cnv)
+tabla = rapidez.memorizar("resumen_masivo", lambda: calculos.resumen_masivo(sel, carteras, sumas, tenencias), seleccion)
 
 # ───────── La tabla de la solapa "Resumen" ─────────
 fechas = sorted({f for f in tabla["Cartera al"] if not formato._es_nulo(f)})
@@ -75,10 +77,10 @@ st.markdown("**Notas:**\n\n" + "\n".join(f"- {n}" for n in calculos.NOTAS_RESUME
 
 # ───────── El informe: una sección por moneda ─────────
 st.divider()
-secs = informe.secciones(tabla, fondos=sel)
+secs = rapidez.memorizar("informe_secciones", lambda: informe.secciones(tabla, fondos=sel), seleccion)
 st.header("Informe")
-st.download_button("Descargar informe en PDF", data=informe.pdf(secs), file_name=informe.nombre_archivo(secs, tabla),
-                   mime="application/pdf", type="primary")
+rapidez.pdf_a_pedido("informe", seleccion, lambda: informe.pdf(secs), informe.nombre_archivo(secs, tabla),
+                   "Descargar informe en PDF", tipo="primary")
 for sec in secs:
     st.subheader(sec["titulo"])
     st.caption(sec["subtitulo"])

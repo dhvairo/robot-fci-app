@@ -62,4 +62,8 @@ def mostrar(inicio):
                   for ruta, titulo, icono in pantallas]
         for seccion, pantallas in menu.items()
     }
-    st.navigation(paginas, position="sidebar", expanded=True).run()
+    pagina = st.navigation(paginas, position="sidebar", expanded=True)
+    estado = acceso._estado_rerun()
+    if estado is not None:      # solo el nombre de la pantalla, para el registro de tiempos por pantalla
+        estado['pagina'] = str(getattr(pagina, 'url_path', '') or 'Inicio')
+    pagina.run()

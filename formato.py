@@ -3,6 +3,7 @@
 Funciones puras (no usan Streamlit ni la base), así se pueden probar sin pantalla.
 """
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 
 ARGENTINA = timezone(timedelta(hours=-3))
 
@@ -47,12 +48,17 @@ def numero_corto(x, minimo=2, maximo=4):
     if _es_nulo(x):
         return VACIO
     try:
-        float(x)
+        v = float(x)
     except (TypeError, ValueError):
         return str(x)
+    return _corto(v, minimo, maximo)
+
+
+@lru_cache(maxsize=100_000)
+def _corto(v, minimo, maximo):
     for dec in range(minimo, maximo + 1):
-        if abs(round(float(x), dec) - float(x)) < 1e-9 or dec == maximo:
-            return numero(x, dec)
+        if abs(round(v, dec) - v) < 1e-9 or dec == maximo:
+            return numero(v, dec)
 
 
 def fecha(d):

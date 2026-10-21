@@ -15,6 +15,7 @@ import filtros
 import formato
 import informe
 import marca
+import rapidez
 
 st.set_page_config(page_title="Comparador", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -84,7 +85,14 @@ def cargar(fondo):
     with st.spinner(f"Cargando… {fondo['nombre']}"):
         return consulta_puntual.cargar(fondo, cache, consulta_puntual.token_configurado(st.secrets))
 
-ser, notas = calculos.historia_comparador(fondos, sel, datos.serie, cargar)
+seleccion = (tuple(fondos.codigo_cnv), tuple(sel.codigo_cafci))
+if fondos.seguido.all():     # los no seguidos se cargan en la sesión (consulta puntual): no se memorizan
+    ser, notas = rapidez.memorizar("comparador_historia", lambda: calculos.historia_comparador(
+        fondos, sel, datos.serie, cargar), *seleccion)
+    notas = list(notas)
+else:
+    ser, notas = calculos.historia_comparador(fondos, sel, datos.serie, cargar)
+desde = hasta = per = None
 if (~fondos.seguido).any():
     notas.insert(0, consulta_puntual.LEYENDA)
 graficos = []
@@ -115,7 +123,10 @@ else:
         desde = primero if periodos[per] is None else max(primero, ultimo - timedelta(days=periodos[per]))
         hasta = ultimo
     st.caption(f"Desde {formato.fecha(desde)} hasta {formato.fecha(hasta)}")
-    serie_pdf, resumen, graficos = calculos.comparar(ser, desde, hasta, modo, controles)
+    serie_pdf, resumen, graficos = rapidez.memorizar(
+        "comparador_comparar", lambda: calculos.comparar(ser, desde, hasta, modo, controles),
+        *seleccion, str(desde), str(hasta), modo, tuple((c["codigo"], c["visible"]) for c in controles),
+        bool(fondos.seguido.all()))
     mostrar = mostrar.merge(resumen, on=["Clase", "Moneda"], how="left")
     for fig in graficos:
         st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
@@ -135,8 +146,10 @@ tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta", "Fecha del 
                       enteros=[c for c in ("Datos", "Último valor de patrimonio") if c in mostrar],
                       numeros={"Rendimiento %": 2} if "Rendimiento %" in mostrar else {})
 st.dataframe(tabla, hide_index=True, width="stretch")
-st.download_button("Descargar comparador en PDF",
-                   data=informe.pdf_comparador(serie_pdf, tabla, modo, notas, fondos=fondos),
-                   file_name="comparador.pdf", mime="application/pdf")
+rapidez.pdf_a_pedido(
+    "comparador", (*seleccion, modo, str(desde), str(hasta), tuple((c["codigo"], c["visible"]) for c in controles),
+                   tuple(notas)),
+    lambda: informe.pdf_comparador(serie_pdf, tabla, modo, notas, fondos=fondos),
+    "comparador.pdf", "Descargar comparador en PDF")
 st.caption("Rendimientos sobre la cuotaparte, sin considerar distribución de utilidades.")
 st.caption(marca.actual()["texto_legal"])

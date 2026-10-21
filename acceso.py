@@ -34,8 +34,10 @@ def _estado_rerun():
     return anterior[1]
 
 
-def lectura_privada(clave, contexto, leer):
-    """Copia de sesión por 5 minutos, después de validar Auth; jamás caché global."""
+def lectura_privada(clave, contexto, leer, copiar=True):
+    """Copia de sesión por 5 minutos, después de validar Auth; jamás caché global.
+
+    copiar=False entrega el objeto guardado (solo lectura) para no copiar estructuras grandes en cada clic."""
     from copy import deepcopy
     if _estado_rerun() is None:
         return leer()
@@ -53,7 +55,7 @@ def lectura_privada(clave, contexto, leer):
         if len(cache) >= 12:
             cache.clear()
         cache[llave] = (ahora, deepcopy(resultado))
-    resultado = deepcopy(cache[llave][1])
+    resultado = deepcopy(cache[llave][1]) if copiar else cache[llave][1]
     tipo = clave[0] if isinstance(clave, tuple) else clave
     nombre = {'vista_carteras': 'CLASIFICACION', 'clasificaciones': 'CLASIFICACION',
               'seguimiento': 'SEGUIMIENTO', 'marca': 'MARCA',
@@ -62,8 +64,29 @@ def lectura_privada(clave, contexto, leer):
     return resultado
 
 
+def memoria_derivada(llave, calcular):
+    """Resultado derivado (tablas, series, PDF) guardado por sesión 5 minutos.
+
+    La llave la arma quien llama con organización, usuario y selección livianas; se descarta junto con las
+    lecturas privadas al escribir. Los resultados guardados se tratan como de solo lectura.
+    """
+    if _estado_rerun() is None:
+        return calcular()
+    cache = st.session_state.setdefault('_derivados', {})
+    ahora = time.monotonic()
+    for k in [k for k, (t, _) in cache.items() if ahora - t >= 300]:
+        del cache[k]
+    if llave not in cache:
+        valor = calcular()
+        while len(cache) >= 40:
+            del cache[next(iter(cache))]
+        cache[llave] = (ahora, valor)
+    return cache[llave][1]
+
+
 def invalidar_lecturas_privadas():
     st.session_state.pop('_lecturas_privadas', None)
+    st.session_state.pop('_derivados', None)
     st.session_state.pop('preferencias_usuario_cache', None)
 
 

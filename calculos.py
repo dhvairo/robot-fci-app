@@ -356,7 +356,7 @@ def parche_edicion_ficha(fila, valores, opciones):
 
 def filas_efectivas(filas):
     """Proyección para consumidores; originales y metadatos quedan en la vista U29."""
-    return pd.DataFrame([{**deepcopy(f), **deepcopy(f['efectiva'])} for f in filas])
+    return pd.DataFrame([{**f, **f['efectiva']} for f in filas])
 
 
 def catalogo_efectivo(comunes, vista):
@@ -1180,8 +1180,8 @@ def preparar_pedidos(df):
     Ordenados del más nuevo al más viejo."""
     df = df.sort_values("id", ascending=False).copy()
     df["accion_texto"] = df["accion"].map(ACCIONES_PEDIDO).fillna(df["accion"])
-    repetido = pd.Series([bool(((df["codigo_cnv"] == p.codigo_cnv) & (df["accion"] == p.accion) & (df["id"] > p.id)).any())
-                          for p in df.itertuples()], index=df.index, dtype=bool)
+    # Repetido = existe un pedido posterior (id mayor) del mismo fondo y la misma acción; lineal en n.
+    repetido = (df.groupby(["codigo_cnv", "accion"])["id"].transform("max") > df["id"]).astype(bool)
     problema = df["estado"] == "problema"
     df["reintentable"] = (df["accion"] == "seguir") & problema & df["motivo"].map(motivo_pide_id) & ~repetido
     df["estado_texto"] = df["estado"].map(ESTADOS_PEDIDO).fillna(df["estado"])

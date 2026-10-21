@@ -15,7 +15,8 @@ def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=()
     valores = list(dict.fromkeys(valores))
     if persistente:
         memoria = st.session_state.setdefault(f"{clave}_memoria", {})
-        visibles = valores if visibles is None else [v for v in visibles if v in valores]
+        conjunto, preferidas = set(valores), set(preferidas)
+        visibles = valores if visibles is None else [v for v in visibles if v in conjunto]
         for v in valores:
             memoria.setdefault(v, v in preferidas)
         llaves = {v: f"{clave}_casilla_{v}" for v in visibles}

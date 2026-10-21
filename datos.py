@@ -357,7 +357,7 @@ def componer_carteras_organizacion(filas_fuente):
 def vista_carteras():
     import acceso
     contexto = _contexto_clasificacion(acceso.usuario())
-    return acceso.lectura_privada('vista_carteras', contexto, _vista_carteras_sin_cache)
+    return acceso.lectura_privada('vista_carteras', contexto, _vista_carteras_sin_cache, copiar=False)
 
 
 def _vista_carteras_sin_cache():
@@ -381,6 +381,16 @@ def _vista_carteras_sin_cache():
     return resultado
 
 
+class VistaCompartida(dict):
+    """Vista de carteras adjunta a un DataFrame: pandas la copia en cada operación; esta no se copia."""
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
+
 def fondos_ficha(incluir_no_seguidos=False):
     try:
         privada = calculos.lectura_seguimiento_activa()
@@ -388,14 +398,20 @@ def fondos_ficha(incluir_no_seguidos=False):
         st.error('No se pudo leer el seguimiento de tu organización. Consulta rechazada.')
         st.stop()
         raise
-    comunes = _fondos_ficha_comunes(True if privada else incluir_no_seguidos)
-    vista = vista_carteras()
-    salida = calculos.catalogo_efectivo(comunes, vista)
-    salida = _seguimiento_para_consulta(salida)
-    if privada and not incluir_no_seguidos:
-        salida = salida[salida['seguido']].copy()
-    salida.attrs['clasificacion'] = vista
-    return salida
+    def componer():
+        comunes = _fondos_ficha_comunes(True if privada else incluir_no_seguidos)
+        vista = vista_carteras()
+        salida = calculos.catalogo_efectivo(comunes, vista)
+        salida = _seguimiento_para_consulta(salida)
+        if privada and not incluir_no_seguidos:
+            salida = salida[salida['seguido']].copy()
+        salida.attrs['clasificacion'] = VistaCompartida(vista)
+        return salida
+    import acceso
+    import rapidez
+    contexto = _contexto_clasificacion(acceso.usuario())      # Auth revalidado en cada clic
+    return rapidez.memorizar('fondos_ficha', componer, bool(incluir_no_seguidos), bool(privada),
+                             contexto=contexto).copy()
 
 
 def _seguimiento_para_consulta(catalogo):
@@ -421,7 +437,8 @@ def resumen_carteras(vista=None):
 
 def clases_gestion(vista=None):
     vista = vista_carteras() if vista is None else vista
-    return calculos.catalogo_efectivo(_clases_gestion_comunes(), vista)
+    import rapidez
+    return rapidez.memorizar('clases_gestion', lambda: calculos.catalogo_efectivo(_clases_gestion_comunes(), vista)).copy()
 
 
 def cartera(codigo_cnv, vista=None):
@@ -443,13 +460,18 @@ def buscar_instrumentos(texto):
     vista = vista_carteras()
     if vista['estado'] != 'habilitado':
         return _buscar_instrumentos_comunes(texto)
-    filas = calculos.filas_efectivas(vista['filas'])
     columnas = ['fondo', 'instrumento', 'pct_pn', 'categoria_resumen',
                 'categoria_detallada', 'moneda', 'fecha_cartera']
+
+    def base():
+        filas = calculos.filas_efectivas(vista['filas'])
+        if not filas.empty:
+            filas['fondo'] = filas.codigo_cnv.map(_fondos_ficha_comunes(True).set_index('codigo_cnv').nombre)
+        return filas
+    import rapidez
+    filas = rapidez.memorizar('buscador_base', base)
     if filas.empty:
         return pd.DataFrame(columns=columnas)
-    nombres = _fondos_ficha_comunes(True).set_index('codigo_cnv').nombre
-    filas['fondo'] = filas.codigo_cnv.map(nombres)
     return filas[filas.instrumento.str.contains(texto, case=False, regex=False, na=False)].sort_values(
         'pct_pn', ascending=False, na_position='last')[columnas]
 
