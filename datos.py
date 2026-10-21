@@ -1,6 +1,8 @@
-"""Acceso a la base para la app: solo lectura, con resultados en caché por 10 minutos."""
+"""Acceso a la base: comunes compartidos por una hora; privados solo en sesión."""
 import os
 import json
+import hashlib
+import time
 from contextlib import contextmanager
 from threading import RLock
 from decimal import Decimal
@@ -110,6 +112,12 @@ def _organizacion_sin_cache(persona):
 
 
 def leer_preferencia(persona, clave):
+    import acceso
+    return acceso.lectura_privada(('preferencia', clave), persona,
+                                 lambda: _leer_preferencia_sin_cache(persona, clave))
+
+
+def _leer_preferencia_sin_cache(persona, clave):
     filas = _personal(persona, "select valor from public.preferencias "
                       "where organizacion=%s and dueno=%s and clave=%s",
                       (persona["organizacion"], persona["id"], clave))
@@ -117,11 +125,15 @@ def leer_preferencia(persona, clave):
 
 
 def guardar_preferencia(persona, clave, valor):
+    import acceso
+    if acceso._estado_rerun() is not None:
+        persona = acceso.revalidar_escritura()
     from psycopg.types.json import Jsonb
     _personal(persona, "insert into public.preferencias(organizacion,dueno,clave,valor) "
               "values (%s,%s,%s,%s) on conflict (organizacion,dueno,clave) "
               "do update set valor=excluded.valor, actualizada=now() returning clave",
               (persona["organizacion"], persona["id"], clave, Jsonb(valor)))
+    acceso.invalidar_lecturas_privadas()
 
 
 CLASIFICACION_DESHABILITADA = "La clasificación por organización no está disponible."
@@ -216,6 +228,7 @@ class RepositorioSeguimiento:
 
         import acceso
         try:
+            acceso.revalidar_escritura()
             return self._operar(par, anotar)
         finally:
             acceso.invalidar_lecturas_privadas()
@@ -234,6 +247,7 @@ class RepositorioSeguimiento:
 
         import acceso
         try:
+            acceso.revalidar_escritura()
             return self._operar(par, confirmar)
         finally:
             acceso.invalidar_lecturas_privadas()
@@ -273,9 +287,6 @@ def _clasificacion_transaccion(contexto, operacion, solo_lectura=False):
                          tuple(contexto[k] for k in ("organizacion", "dueno", "usuario", "rol")))
             with calculos.medir_seguimiento('CONSULTA_CLASIFICACION'):
                 resultado = operacion(conn)
-            if not solo_lectura:
-                import acceso
-                acceso.invalidar_lecturas_privadas()
         return resultado
     except Exception as error:
         if getattr(error, "sqlstate", None) in ("42P01", "42883", "3F000"):
@@ -295,8 +306,10 @@ def leer_clasificaciones(persona, ids):
     contexto = _contexto_clasificacion(persona)
     identificadores = [str(UUID(str(i))) for i in ids]
 
-    return _clasificacion_transaccion(
-        contexto, lambda conn: _leer_clasificaciones(conn, identificadores, contexto))
+    import acceso
+    return acceso.lectura_privada(('clasificaciones', tuple(identificadores)), contexto,
+        lambda: _clasificacion_transaccion(
+            contexto, lambda conn: _leer_clasificaciones(conn, identificadores, contexto)))
 
 
 def _leer_clasificaciones(conn, identificadores, contexto):
@@ -348,7 +361,7 @@ def vista_carteras():
 
 
 def _vista_carteras_sin_cache():
-    """Carga común compartida; composición privada de sesión por hasta 30 segundos.
+    """Carga común compartida; composición privada de sesión por hasta 5 minutos.
 
     Solo consultar tiene caché global. La vista se pasa entre consumidores de una
     pantalla para que filtros, tablas y PDF usen exactamente el mismo snapshot.
@@ -461,7 +474,11 @@ def _escribir_clasificacion(instrumento_id, accion, parche, version_regla, versi
                                 (identificador, Jsonb(parche), version_regla, version_fuente)).fetchone()[0]
         return conn.execute("select public.clasificacion_resolver(%s::uuid, %s, %s, %s)",
                             (identificador, accion, version_regla, version_fuente)).fetchone()[0]
-    return _clasificacion_transaccion(contexto, escribir)
+    import acceso
+    try:
+        return _clasificacion_transaccion(contexto, escribir)
+    finally:
+        acceso.invalidar_lecturas_privadas()
 
 
 def guardar_clasificacion(instrumento_id, parche, version_regla, version_fuente):
@@ -506,10 +523,37 @@ def resolver_novedad_ficha(fila, accion):
                           fila['revision'], fila['version_fuente'])
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def consultar(sql, params=None):
-    """Corre una consulta (solo lectura) y devuelve un DataFrame."""
+@st.cache_data(ttl=3600, show_spinner=False)
+def _consultar_comun(sql, params, _fallo):
+    _fallo.append(True)
     return _ejecutar(sql, params)
+
+
+def consultar(sql, params=None):
+    """Clave estable entre pantallas; el observador no participa en el hash.
+
+    No normalizar SQL (puede contener literales); sí tipos escalares numpy y
+    contenedores de parámetros para evitar claves distintas de un mismo valor.
+    """
+    import acceso
+    def canonico(valor):
+        if isinstance(valor, list):
+            return [canonico(v) for v in valor]
+        if isinstance(valor, tuple):
+            return tuple(canonico(v) for v in valor)
+        if type(valor).__module__.startswith('numpy'):
+            return valor.item()
+        return valor
+    inicio = time.perf_counter()
+    fallo = []
+    # psycopg necesita listas para los parámetros ANY; mantenerlas en SQL.
+    resultado = _consultar_comun(sql, canonico(params), fallo)
+    acceso.registrar_cache('COMUN_' + hashlib.sha256(sql.encode('utf-8')).hexdigest()[:8],
+                          not fallo, (time.perf_counter() - inicio) * 1000)
+    return resultado
+
+
+consultar.clear = _consultar_comun.clear
 
 
 def fondos_seguidos():
@@ -707,14 +751,16 @@ def catalogo_fondos():
     return _seguimiento_para_consulta(_catalogo_fondos_comun())
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def _catalogo_fondos_comun():
     """Todos los fondos del catálogo (seguidos o no) para el buscador de "Sumar o quitar fondos"."""
-    return _ejecutar(
+    return consultar(
         "select f.codigo_cnv, f.nombre, f.moneda, f.seguido, f.id_ficha_web, f.tipo_fondo, f.rubro, "
         "f.descripcion_breve, f.tematica, f.tematica_provisoria, g.nombre as gerente "
         "from fondos f left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
         "order by f.nombre")
+
+
+_catalogo_fondos_comun.clear = consultar.clear
 
 
 def pedidos_recientes(limite=60):
@@ -756,6 +802,8 @@ def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None
     if not url:
         raise ErrorPedido("Falta PEDIDOS_DB_URL o APP_DB_URL (archivo .env o secretos de la app): no se puede anotar el pedido.")
     try:
+        if acceso._estado_rerun() is not None:
+            acceso.revalidar_escritura()
         with conexion_compartida(url, connect_timeout=20) as conn:
             fila = conn.execute(
                 "insert into pedidos_fondos (codigo_cnv, accion, descripcion_breve, idea_tematica, id_ficha_cnv) "
@@ -763,4 +811,5 @@ def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None
                 (int(codigo_cnv), accion, descripcion, idea, id_ficha)).fetchone()
     except psycopg.Error as e:
         raise ErrorPedido("No se pudo anotar el pedido: " + " ".join(str(e).replace(url, "***").split())[:160])
+    acceso.invalidar_lecturas_privadas()
     return fila[0]

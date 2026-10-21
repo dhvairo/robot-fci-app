@@ -35,7 +35,7 @@ def _estado_rerun():
 
 
 def lectura_privada(clave, contexto, leer):
-    """Copia de sesión por 30 s, después de validar Auth; jamás caché global."""
+    """Copia de sesión por 5 minutos, después de validar Auth; jamás caché global."""
     from copy import deepcopy
     if _estado_rerun() is None:
         return leer()
@@ -43,19 +43,39 @@ def lectura_privada(clave, contexto, leer):
     cache = st.session_state.setdefault('_lecturas_privadas', {})
     llave = (clave, identidad)
     ahora = time.monotonic()
+    inicio = time.perf_counter()
     for k in list(cache):
-        if ahora - cache[k][0] >= 30:
+        if ahora - cache[k][0] >= 300:
             del cache[k]
+    acierto = llave in cache
     if llave not in cache:
         resultado = leer()  # No guardar fallos ni operaciones sin commit.
         if len(cache) >= 12:
             cache.clear()
         cache[llave] = (ahora, deepcopy(resultado))
-    return deepcopy(cache[llave][1])
+    resultado = deepcopy(cache[llave][1])
+    tipo = clave[0] if isinstance(clave, tuple) else clave
+    nombre = {'vista_carteras': 'CLASIFICACION', 'clasificaciones': 'CLASIFICACION',
+              'seguimiento': 'SEGUIMIENTO', 'marca': 'MARCA',
+              'preferencia': 'PERSONAL'}.get(tipo, 'PRIVADA')
+    registrar_cache(nombre, acierto, (time.perf_counter() - inicio) * 1000)
+    return resultado
 
 
 def invalidar_lecturas_privadas():
     st.session_state.pop('_lecturas_privadas', None)
+    st.session_state.pop('preferencias_usuario_cache', None)
+
+
+def registrar_cache(nombre, acierto, ms=0):
+    """Solo nombres internos, duración y contadores; ninguna identidad ni parámetro."""
+    import logging
+    estado = _estado_rerun()
+    if estado is not None:
+        contador = 'cache_aciertos' if acierto else 'cache_fallos'
+        estado[contador] = estado.get(contador, 0) + 1
+    logging.getLogger('seguimiento').log(logging.WARNING,
+        'SEGUIMIENTO CACHE %s %s %.3f_ms', nombre, 'ACIERTO' if acierto else 'FALLO', ms)
 
 
 def roles_activos():
@@ -270,11 +290,16 @@ def formulario_seguimiento(codigo, renovar=False):
 def escribir_seguimiento(catalogo, formulario):
     """Única salida privada de escritura; nunca continúa por el legado al fallar."""
     import calculos
+    try:
+        revalidar_escritura()
+    except ErrorAcceso:
+        raise calculos.ErrorSeguimiento('CONTEXTO_RECHAZADO') from None
     lector = lector_seguimiento()
     if lector is None:
         raise calculos.ErrorSeguimiento('BACKEND_AUSENTE')
     backend, resolver = lector
     pedido = calculos.solicitar_seguimiento(catalogo, backend, formulario, resolver)
+    invalidar_lecturas_privadas()
     # Solo después del commit confirmado. La caché común de Streamlit no se toca.
     for clave in list(st.session_state):
         if clave.startswith('seguimiento_privado_'):
@@ -369,22 +394,40 @@ def usuario():
     return sesion["persona"] if sesion else None
 
 
-def _validar_sesion():
+def revalidar_escritura():
+    """Descarta la validación reutilizable antes de cada operación de escritura."""
+    sesion = st.session_state.get('auth')
+    anterior = dict(sesion.get('persona', {})) if sesion else {}
+    if sesion:
+        sesion.pop('_validacion', None)
+    persona = _validar_sesion()
+    if anterior and any(persona.get(k) != anterior.get(k) for k in
+                        ('id', 'organizacion', 'rol', 'version_clave', 'cambio_obligatorio', 'superadmin')):
+        raise ErrorAcceso('La autorización cambió. Revisá la sesión antes de guardar.')
+    return persona
+
+
+def _validar_sesion(forzar=False):
     from calculos import medir_seguimiento
     estado = _estado_rerun()
     if estado is None:
         return _validar_sesion_real()
     sesion = st.session_state.get('auth')
     llave = (sesion.get('access_token'), dict(sesion.get('persona', {})), roles_activos()) if sesion else None
-    anterior = estado.get('auth') if estado is not None else None
-    if anterior is not None and anterior[0] == llave:
+    anterior = sesion.get('_validacion') if sesion else None
+    if (not forzar and anterior is not None and anterior[0] == llave
+            and time.monotonic() - anterior[2] < 300
+            and time.time() < sesion['vence'] - 60):
+        registrar_cache('AUTH', True)
         return dict(anterior[1])
+    registrar_cache('AUTH', False)
     with medir_seguimiento('AUTH'):
         persona = _validar_sesion_real()
     if estado is not None:
         sesion = st.session_state.get('auth')
         if sesion:
-            estado['auth'] = ((sesion.get('access_token'), dict(persona), roles_activos()), dict(persona))
+            sesion['_validacion'] = ((sesion.get('access_token'), dict(persona), roles_activos()),
+                                     dict(persona), time.monotonic())
     return persona
 
 
@@ -425,8 +468,8 @@ def cerrar_sesion():
         st.session_state.clear()
 
 
-def _admin():
-    persona = _validar_sesion()
+def _admin(forzar=False):
+    persona = revalidar_escritura() if forzar else _validar_sesion()
     if persona["rol"] != "admin" or persona["cambio_obligatorio"]:
         raise ErrorAcceso("Solo el administrador puede gestionar usuarios.")
     return persona
@@ -440,6 +483,7 @@ def requerir_admin_clasificacion():
     """
     mensaje = "Solo un administrador autorizado puede editar la clasificación."
     try:
+        revalidar_escritura()
         if roles_activos():
             _admin()
             c = configuracion_seguimiento()
@@ -524,7 +568,7 @@ def aviso_dominio(correo):
 
 def crear_usuario(correo, confirmacion=None, admin=False, inicial=False):
     # inicial es exclusivamente para el comando local del operador del servidor.
-    organizacion = "propia" if inicial else _admin()["organizacion"]
+    organizacion = "propia" if inicial else _admin(forzar=True)["organizacion"]
     correo = validar_correo(correo, correo if inicial else (confirmacion or ""))
     temporal = secrets.token_urlsafe(24)
     _api("POST", "admin/users", {"email": correo.strip(), "password": temporal, "email_confirm": True,
@@ -547,7 +591,7 @@ def listar_usuarios():
 
 
 def restablecer_clave(identificador, clave, confirmacion):
-    persona = _admin()
+    persona = _admin(forzar=True)
     if len(clave) < 12 or clave != confirmacion:
         raise ErrorAcceso("Usá al menos 12 caracteres y repetí la misma clave.")
     identificador = str(UUID(identificador))
@@ -561,7 +605,7 @@ def restablecer_clave(identificador, clave, confirmacion):
 
 
 def cambiar_clave(clave, confirmacion):
-    persona = _validar_sesion()
+    persona = revalidar_escritura()
     if len(clave) < 12 or clave != confirmacion:
         raise ErrorAcceso("Usá al menos 12 caracteres y repetí la misma clave.")
     _api("PUT", "user", {"password": clave}, token=st.session_state["auth"]["access_token"])
@@ -572,6 +616,8 @@ def cambiar_clave(clave, confirmacion):
         raise ErrorAcceso("Tu clave fue restablecida. Volvé a ingresar.")
     _api("PUT", "admin/users/" + persona["id"], {"app_metadata": {**meta, "cambio_obligatorio": False}}, admin=True)
     st.session_state["auth"]["persona"]["cambio_obligatorio"] = False
+    st.session_state['auth'].pop('_validacion', None)
+    invalidar_lecturas_privadas()
 
 
 def _pantalla_usuarios():

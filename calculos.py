@@ -24,9 +24,13 @@ class ErrorClasificacion(ValueError):
 
 
 def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
-    """Lectura única por sesión/identidad; guardar actualiza la copia tras commit."""
+    """Lectura por sesión/identidad durante 5 minutos; escritura invalida tras commit."""
     from acceso import lector_preferencias
     from preferencias_usuario import Preferencias, efectivas, ErrorPreferencia
+    if cambios is not None or restablecer:
+        from acceso import preferencias_activas, revalidar_escritura
+        if preferencias_activas():
+            revalidar_escritura()
     lector = lector_preferencias()
     if lector is None:
         sesion.pop('preferencias_usuario_cache', None)
@@ -42,9 +46,14 @@ def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
         if cambios is not None:
             plan_guardado(contexto, cambios)
         cache = sesion.get('preferencias_usuario_cache')
-        if cache is None or cache['identidad'] != identidad:
+        acierto = (cache is not None and cache['identidad'] == identidad
+                   and time.monotonic() - cache.get('leida', 0) < 300)
+        from acceso import registrar_cache
+        registrar_cache('PREFERENCIAS', acierto)
+        if not acierto:
             # Conservar presencia de claves: un default no es una preferencia guardada.
-            cache = {'identidad': identidad, 'guardadas': backend.leer(identidad)}
+            cache = {'identidad': identidad, 'guardadas': backend.leer(identidad),
+                     'leida': time.monotonic()}
             sesion['preferencias_usuario_cache'] = cache
             try:
                 cache['resultado'] = efectivas(cache['guardadas'])
@@ -57,6 +66,9 @@ def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
             # Sesiones abiertas con U88 aún no conservan las claves explícitas.
             cache.setdefault('guardadas', {}).update(deepcopy(cambios))
             cache['resultado'] = efectivas({**cache['resultado']['valores'], **cambios})
+            from acceso import invalidar_lecturas_privadas
+            invalidar_lecturas_privadas()
+            sesion.pop('preferencias_usuario_cache', None)
         return deepcopy(cache['resultado']['valores'])
     except ErrorPreferencia:
         raise

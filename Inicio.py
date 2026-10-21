@@ -2,6 +2,9 @@
 
 Se abre con:  streamlit run app/Inicio.py   (o con "Abrir app.bat")
 """
+import time
+import logging
+_inicio_rerun = time.perf_counter()
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -108,5 +111,12 @@ def mostrar_inicio():
                "no es una recomendación de inversión.")
 
 
-_hoja_estilo = st.empty()
-estilo.presentar(_hoja_estilo, lambda: navegacion.mostrar(mostrar_inicio))
+try:
+    _hoja_estilo = st.empty()
+    estilo.presentar(_hoja_estilo, lambda: navegacion.mostrar(mostrar_inicio))
+finally:
+    _cache_rerun = acceso._estado_rerun() or {}
+    logging.getLogger('seguimiento').log(logging.WARNING,
+        'SEGUIMIENTO TIEMPO RERUN_TOTAL %.3f_ms cache_aciertos=%d cache_fallos=%d',
+        (time.perf_counter() - _inicio_rerun) * 1000,
+        _cache_rerun.get('cache_aciertos', 0), _cache_rerun.get('cache_fallos', 0))
