@@ -507,8 +507,25 @@ def monedas_de(opcion):
 
 def filtrar_moneda(df, opcion, columna="moneda"):
     """Deja solo los fondos o clases de esa moneda ('Todos' no filtra)."""
+    if isinstance(opcion, (list, tuple)):
+        if not opcion:
+            return df
+        codigos = set(c for o in opcion for c in (monedas_de(o) or ()))
+        return df[df[columna].isin(codigos)]
     codigos = monedas_de(opcion)
     return df if codigos is None else df[df[columna].isin(codigos)]
+
+
+def aviso_monedas(monedas):
+    """Compara familias de moneda, separando variantes del dólar."""
+    textos = {str(m).strip().upper() for m in monedas if pd.notna(m)}
+    pesos = any(t in ('ARS', '$', 'PESOS', 'PESO') for t in textos)
+    dolares = {t for t in textos if t in ('USD', 'USB', 'US$', 'U$S') or 'DÓLAR' in t or 'DOLAR' in t or 'MEP' in t or 'CABLE' in t}
+    if pesos and dolares:
+        return 'Estás comparando monedas distintas: los rendimientos y patrimonios no son directamente comparables.'
+    if any('MEP' in t for t in dolares) and any('CABLE' in t for t in dolares):
+        return 'Estás comparando dólares de distinto tipo (MEP y cable).'
+    return None
 
 
 def filtrar_por_rubros(df, rubros, columna="categoria_resumen"):

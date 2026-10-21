@@ -6,6 +6,29 @@ escribir (acceso.invalidar_lecturas_privadas) o a los 5 minutos. Las pantallas s
 import streamlit as st
 
 
+def tabla_memorizada(clave, tabla, *seleccion):
+    """Conserva también la serialización del Styler, privada por sesión.
+
+    Adaptador de Streamlit: solo tabla de lectura, sin estado de selección. Mantiene
+    números ordenables y formato argentino; evita traducir miles de celdas por clic.
+    """
+    from streamlit.elements import arrow
+    from streamlit.elements.lib.layout_utils import LayoutConfig
+    moderno = hasattr(arrow, 'DataframeProto')
+
+    def construir():
+        proto = arrow.DataframeProto() if moderno else arrow.ArrowProto()
+        destino = proto.arrow_data if hasattr(proto, 'arrow_data') else proto
+        arrow.marshall(destino, tabla, default_uuid=clave)
+        proto.columns = '{"_index": {"hidden": true}}'
+        if hasattr(proto, 'use_container_width'):
+            proto.use_container_width = True
+        return proto
+    proto = memorizar(clave + '_serializada', construir, *seleccion)
+    return st._main._enqueue('dataframe' if moderno else 'arrow_data_frame', proto,
+                             layout_config=LayoutConfig(width='stretch'))
+
+
 def memorizar(clave, calcular, *seleccion, contexto=None):
     """Derivado memorizado por sesión, organización, usuario y selección liviana.
 

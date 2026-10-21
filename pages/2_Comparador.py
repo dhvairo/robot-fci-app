@@ -28,23 +28,13 @@ todos = datos.fondos_ficha(incluir_no_seguidos=True)
 if todos.empty:
     st.info("No hay fondos en el catálogo.")
     st.stop()
-base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento)
+base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento, multiple=True)
 if base.empty:
     st.info("No hay fondos para estos filtros.")
     st.stop()
 nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
 with st.expander("Fondos", expanded=False):
-    def guardar_busqueda():
-        st.session_state["comparador_busqueda_memoria"] = st.session_state["comparador_busqueda"]
-
-    if "comparador_busqueda" not in st.session_state:
-        st.session_state["comparador_busqueda"] = st.session_state.get("comparador_busqueda_memoria", "")
-    texto = st.text_input("Buscar por denominación", key="comparador_busqueda", on_change=guardar_busqueda)
-    visibles = filtros.buscar_denominacion(base, texto)
-    if visibles.empty:
-        st.info("No hay fondos para esta búsqueda.")
-    elegidos = filtros.casillas("Fondos", base.codigo_cnv.tolist(), "comparador_fondos",
-                               formato=nombres.get, persistente=True, visibles=visibles.codigo_cnv.tolist())
+    elegidos = filtros.lista_fondos("Fondos", nombres, "comparador_fondos")
 if not elegidos:
     with st.expander("Clase", expanded=False):
         st.info("Seleccioná fondos para ver sus clases.")
@@ -76,9 +66,12 @@ sel = clases[clases.codigo_cafci.isin(elegidas)]
 fondos = fondos[fondos.codigo_cnv.isin(sel.codigo_cnv)]
 modo = st.radio("Qué comparar", ["R", "P", "R y P"], horizontal=True,
                 format_func=lambda x: {"R": "Rendimiento (R)", "P": "Patrimonio (P)", "R y P": "R y P"}[x])
-if st.button("Ver estos fondos en el Informe descriptivo"):
+if 'comparador_llevar' not in st.session_state:
+    st.session_state['comparador_llevar'] = st.session_state.get('comparador_llevar_memoria', False)
+llevar = st.toggle("Llevar estos fondos al Informe descriptivo", key="comparador_llevar")
+st.session_state['comparador_llevar_memoria'] = llevar
+if llevar:
     calculos.enviar_al_informe(st.session_state, fondos.codigo_cnv)
-    st.switch_page("pages/5_Resumen_masivo_de_fondos.py")
 
 cache = st.session_state.setdefault("consulta_puntual", {})
 def cargar(fondo):
@@ -97,8 +90,10 @@ if (~fondos.seguido).any():
     notas.insert(0, consulta_puntual.LEYENDA)
 graficos = []
 serie_pdf = ser
-mostrar = sel[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "moneda": "Moneda"})
 controles = calculos.controles_series(st.session_state, sel)
+visibles = sel[sel.codigo_cafci.isin([c["codigo"] for c in controles if c["visible"]])]
+serie_pdf = ser[ser.codigo_cafci.isin(visibles.codigo_cafci)] if not ser.empty else ser
+mostrar = visibles[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "moneda": "Moneda"})
 st.caption("Series del gráfico: tocá un botón para ocultar o mostrar su línea.")
 for control in controles:
     st.button(control["nombre"], key=f"comparador_serie_{control['codigo']}",
@@ -127,17 +122,19 @@ else:
         "comparador_comparar", lambda: calculos.comparar(ser, desde, hasta, modo, controles),
         *seleccion, str(desde), str(hasta), modo, tuple((c["codigo"], c["visible"]) for c in controles),
         bool(fondos.seguido.all()))
+    serie_pdf = serie_pdf[serie_pdf.codigo_cafci.isin(visibles.codigo_cafci)]
     mostrar = mostrar.merge(resumen, on=["Clase", "Moneda"], how="left")
     for fig in graficos:
         st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
     sin_cobertura = calculos.clases_sin_cobertura(serie_pdf, desde, hasta)
-    sin_periodo = set(sel.etiqueta) - set(serie_pdf.etiqueta)
+    sin_periodo = set(visibles.etiqueta) - set(serie_pdf.etiqueta)
     if sin_periodo:
         notas.append("Sin datos en el período: " + ", ".join(sorted(sin_periodo)) + ".")
     if sin_cobertura:
         notas.append("No tienen datos en todo el período: " + ", ".join(sin_cobertura) + ".")
-if sel.moneda.nunique() > 1:
-    notas.append("Estás comparando monedas distintas: los rendimientos y patrimonios no son directamente comparables.")
+aviso_moneda = calculos.aviso_monedas(visibles.moneda)
+if aviso_moneda:
+    notas.append(aviso_moneda)
 if modo in ("P", "R y P") and (ser.empty or ser.patrimonio.isna().any()):
     notas.append("Patrimonio no disponible en algunas fechas o clases; los huecos no se interpolan.")
 for nota in notas:
@@ -149,7 +146,7 @@ st.dataframe(tabla, hide_index=True, width="stretch")
 rapidez.pdf_a_pedido(
     "comparador", (*seleccion, modo, str(desde), str(hasta), tuple((c["codigo"], c["visible"]) for c in controles),
                    tuple(notas)),
-    lambda: informe.pdf_comparador(serie_pdf, tabla, modo, notas, fondos=fondos),
+    lambda: informe.pdf_comparador(serie_pdf, tabla, modo, notas, fondos=fondos[fondos.codigo_cnv.isin(visibles.codigo_cnv)]),
     "comparador.pdf", "Descargar comparador en PDF")
 st.caption("Rendimientos sobre la cuotaparte, sin considerar distribución de utilidades.")
 st.caption(marca.actual()["texto_legal"])

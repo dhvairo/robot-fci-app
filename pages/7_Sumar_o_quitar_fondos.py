@@ -184,6 +184,7 @@ if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
 
 # ───────── Mis pedidos ─────────
 st.subheader("Mis pedidos")
+pedidos = pedidos[pedidos.estado.isin(["pendiente", "problema"])]
 if pedidos.empty:
     st.info("Todavía no se pidió nada.")
 else:

@@ -60,7 +60,10 @@ def aplicar(fondos, situacion="Seguidos", moneda="Todas", rubro="Todos", categor
         base = base[base["seguido"].eq(situacion == "Seguidos")]
     base = calculos.filtrar_moneda(base, moneda)
     for campo, valor, todos in (("rubro", rubro, "Todos"), ("categoria", categoria, "Todas")):
-        if valor != todos:
+        if isinstance(valor, (list, tuple)):
+            if valor:
+                base = base[base[campo].isin(valor)]
+        elif valor != todos:
             base = base[base[campo].eq(valor)]
     return base
 
@@ -77,7 +80,7 @@ def opciones(fondos, nivel, anteriores=(), todas_monedas=True):
     return [TODOS[nivel], *sorted(base[CAMPOS[nivel]].dropna().unique())]
 
 
-def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False, inicial=None):
+def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False, inicial=None, multiple=False):
     import streamlit as st
     elegidas = []
     for nivel, (col, etiqueta) in enumerate(zip(st.columns(4), ("Fondos", "Moneda", "Rubro", "Categoría"))):
@@ -90,6 +93,14 @@ def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", per
             valores = [moneda_todos if v == "Todas" else v for v in valores]
         llave = f"{clave}_filtro_{nivel}"
         memoria = f"{llave}_memoria"
+        if multiple and nivel > 0:
+            valores = sorted(valores[1:])
+            anteriores = st.session_state.get(llave, st.session_state.get(memoria, []))
+            st.session_state[llave] = [v for v in anteriores if v in valores] if isinstance(anteriores, list) else []
+            valor = col.multiselect(etiqueta, valores, key=llave, placeholder="Todos")
+            st.session_state[memoria] = valor
+            elegidas.append(valor)
+            continue
         recordar = persistente or (nivel == 0 and inicial is not None)
         if recordar and llave not in st.session_state and memoria in st.session_state:
             st.session_state[llave] = st.session_state[memoria]
@@ -100,6 +111,19 @@ def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", per
             st.session_state[memoria] = valor
         elegidas.append("Todas" if nivel == 1 and valor == moneda_todos else valor)
     return aplicar(fondos, *elegidas)
+
+
+def lista_fondos(etiqueta, nombres, clave, defecto=()):
+    """Búsqueda nativa y selección con ×; memoria independiente de la vida del widget."""
+    import streamlit as st
+    opciones = sorted(nombres, key=lambda c: (nombres[c].casefold(), str(c)))
+    memoria = clave + '_memoria'
+    anterior = st.session_state.get(clave, st.session_state.get(memoria, list(defecto)))
+    st.session_state[clave] = [c for c in anterior if c in nombres]
+    elegidos = st.multiselect(etiqueta, opciones, key=clave, format_func=nombres.get,
+                             placeholder="Todos · escribí para buscar")
+    st.session_state[memoria] = list(elegidos)
+    return elegidos or opciones
 
 
 def restablecer_informe(sesion):

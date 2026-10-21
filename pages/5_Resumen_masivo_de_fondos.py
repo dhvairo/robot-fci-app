@@ -42,8 +42,7 @@ if todos.empty:
     st.stop()
 base = filtros.mostrar(todos, clave="informe", moneda_todos="Todos", inicial=inicial_seguimiento)
 nombres = dict(zip(base.codigo_cnv, base.nombre))
-elegidos = filtros.casillas("Fondos a incluir", nombres, "informe_casillas_" + modo,
-                            formato=nombres.get, preferidas=nombres)
+elegidos = filtros.lista_fondos("Fondos a incluir", nombres, "informe_fondos", nombres)
 if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()
@@ -70,9 +69,10 @@ columnas = calculos.columnas_resumen(tabla)
 porcentajes = [c for c in columnas if c not in ("Patrimonio neto",) and (
     c in {calculos.ETIQUETA_CATEGORIA.get(k, k) for k in calculos.CATEGORIAS_RESUMEN} or c == calculos.AJUSTE
     or c.startswith("% "))]
-st.dataframe(formato.tabla(tabla[columnas], fechas=["Cartera al"] if "Cartera al" in columnas else (),
-                           numeros={**{c: 2 for c in porcentajes}, "Patrimonio neto": 2}),
-             hide_index=True, width="stretch")
+st.dataframe(rapidez.memorizar("informe_tabla", lambda: formato.tabla(tabla[columnas],
+    fechas=["Cartera al"] if "Cartera al" in columnas else (),
+    numeros={**{c: 2 for c in porcentajes}, "Patrimonio neto": 2}), seleccion),
+    hide_index=True, width="stretch")
 st.markdown("**Notas:**\n\n" + "\n".join(f"- {n}" for n in calculos.NOTAS_RESUMEN))
 
 # ───────── El informe: una sección por moneda ─────────
@@ -86,14 +86,16 @@ for sec in secs:
     st.caption(sec["subtitulo"])
     st.caption(sec["aclaracion"])
     fondos = sec["fondos"]
-    fig = go.Figure(go.Pie(
-        labels=[f["nombre"] for f in fondos], values=[1] * len(fondos), sort=False, direction="clockwise",
-        marker=dict(colors=[marca.paleta()[i % len(marca.paleta())] for i in range(len(fondos))],
-                    line=dict(color="white", width=2)),
-        text=[f["etiqueta"].replace("\n", "<br>") for f in fondos], textinfo="text", textposition="outside",
-        hoverinfo="text", showlegend=False))
-    fig.update_layout(title=dict(text=sec["titulo_torta"], x=0.5), height=520, margin=dict(t=70, b=30, l=10, r=10))
-    st.plotly_chart(formato.plotly_es(fig), width="stretch")
+    def armar_torta():
+        fig = go.Figure(go.Pie(
+            labels=[f["nombre"] for f in fondos], values=[1] * len(fondos), sort=False, direction="clockwise",
+            marker=dict(colors=[marca.paleta()[i % len(marca.paleta())] for i in range(len(fondos))],
+                        line=dict(color="white", width=2)),
+            text=[f["etiqueta"].replace("\n", "<br>") for f in fondos], textinfo="text", textposition="outside",
+            hoverinfo="text", showlegend=False))
+        fig.update_layout(title=dict(text=sec["titulo_torta"], x=0.5), height=520, margin=dict(t=70, b=30, l=10, r=10))
+        return formato.plotly_es(fig)
+    st.plotly_chart(rapidez.memorizar("informe_torta", armar_torta, seleccion, sec["titulo"]), width="stretch")
     filas = [{"Fondo": f["nombre"] + (f" (cartera al {f['fecha']})" if f["fecha"] else ""),
               "Principales rubros": "  \n".join(f["rubros"]) or formato.VACIO, "Idea y temática": f["idea"]}
              for f in fondos]

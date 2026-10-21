@@ -125,7 +125,7 @@ else:
     else:
         st.caption("Ordenadas por puntaje. La posición es dentro de cada grupo (mismo tipo de fondo y moneda).")
 if vista_tablas["estilo"] is not None:
-    st.dataframe(vista_tablas["estilo"], hide_index=True, width="stretch")
+    rapidez.tabla_memorizada("gestion_tabla", vista_tablas["estilo"], firma, activa)
 if activa:
     st.subheader(f"Quedan afuera del ranking ({formato.entero(vista_tablas['afuera'])} clases)")
     if vista_tablas["tabla_afuera"] is None:

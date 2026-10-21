@@ -523,6 +523,41 @@ def guardar_edicion_ficha(fila, valores, opciones, cancelar=False):
                                  fila['revision'] or 0, fila['version_fuente'])
 
 
+def guardar_edicion_ficha_lote(filas, valores, opciones):
+    """Un contexto revalidado, una transacción atómica y una invalidación por lote."""
+    from uuid import UUID
+    from psycopg.types.json import Jsonb
+    import acceso
+    contexto = _contexto_clasificacion(escritura=True)
+    cambios = []
+    for fila in filas:
+        parche = calculos.parche_edicion_ficha(fila, valores, opciones)
+        if parche is None:
+            continue
+        identificador = str(UUID(str(fila['identidad']['instrumento_id'])))
+        vr, vf = fila['revision'] or 0, fila['version_fuente']
+        if type(vr) is not int or vr < 0 or type(vf) is not int or vf < 1:
+            raise calculos.ErrorClasificacion('VERSION_INVALIDA')
+        calculos._aplicar_parche({}, parche)
+        cambios.append((identificador, Jsonb(parche), vr, vf))
+    if not cambios:
+        return {'estado': 'sin_cambios', 'cantidad': 0}
+
+    def escribir(conn):
+        for parametros in cambios:
+            resultado = conn.execute(
+                'select public.clasificacion_guardar(%s::uuid, %s::jsonb, %s, %s)',
+                parametros).fetchone()[0]
+            if resultado.get('estado') != 'guardado':
+                # También un rechazo devuelto como dato debe revertir las filas anteriores.
+                raise calculos.ErrorClasificacion('No se guardó el lote; recargá y revisá las filas.')
+        return {'estado': 'guardado', 'cantidad': len(cambios)}
+    try:
+        return _clasificacion_transaccion(contexto, escribir)
+    finally:
+        acceso.invalidar_lecturas_privadas()
+
+
 def resolver_fuente(instrumento_id, accion, version_regla, version_fuente):
     return _escribir_clasificacion(instrumento_id, accion, None, version_regla, version_fuente)
 

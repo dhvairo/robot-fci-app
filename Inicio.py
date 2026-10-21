@@ -23,6 +23,7 @@ import formato  # noqa: E402
 import horarios  # noqa: E402
 import navegacion  # noqa: E402
 import estilo  # noqa: E402
+import rapidez  # noqa: E402
 
 st.set_page_config(page_title=marca.nombre(), page_icon="📈", layout="wide")
 
@@ -43,7 +44,7 @@ def mostrar_inicio():
                "El estado de ejecución es independiente de la antigüedad del dato. "
                "Los enlaces a Actions requieren acceso al repositorio privado.")
 
-    r = datos.resumen_base()
+    r = rapidez.memorizar("inicio_resumen", datos.resumen_base)
 
 
     def miles(n):
@@ -75,7 +76,7 @@ def mostrar_inicio():
 
     st.subheader("Cuándo se actualiza cada dato")
     ahora = datetime.now(horarios.ARGENTINA)
-    u = datos.ultimas_entradas()
+    u = rapidez.memorizar("inicio_entradas", datos.ultimas_entradas)
     cuadro = pd.DataFrame(
         horarios.filas_cuadro(horarios.cargar(), ahora, {k: u[k] for k in u.index}, formato.fecha_hora_ar),
         columns=["Dato", "Cuándo se actualiza", "Última vez que entró un dato nuevo", "Próxima corrida programada"])
@@ -86,7 +87,7 @@ def mostrar_inicio():
                "no se guarda nada.")
 
     st.subheader("Últimos archivos procesados por el robot")
-    e = datos.estado_robot()
+    e = rapidez.memorizar("inicio_robot", datos.estado_robot)
     if e.empty:
         st.info("Todavía no hay archivos procesados.")
     else:

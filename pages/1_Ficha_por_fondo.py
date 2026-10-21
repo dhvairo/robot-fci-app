@@ -99,6 +99,8 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
     tabla = formato.tabla(tabla, numeros={'% del PN': 2}, booleanos=['Sin clasificar'])
     tabla.insert(0, 'Editar', False)
     clave = f"ficha_edicion_{persona.get('id')}_{persona.get('organizacion')}_{codigo}_{fecha}"
+    if clave + '_lote_resultado' in st.session_state:
+        st.success(st.session_state.pop(clave + '_lote_resultado'))
     mostrar_novedades_clasificacion(filas, clave + '_novedad', motivo)
     if clave + '_novedad_resultado' in st.session_state:
         st.success(st.session_state.pop(clave + '_novedad_resultado'))
@@ -109,13 +111,58 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
                'La observación inicial no reconstruye clasificaciones históricas.')
     if motivo:
         st.caption(motivo)
+    todos_marcados = st.checkbox('Todos', key=tabla_clave + '_todos', disabled=bool(motivo))
+    tabla['Editar'] = todos_marcados
+    tabla_clave += str(todos_marcados)
     editada = st.data_editor(tabla, hide_index=True, width='stretch',
                             disabled=True if motivo else [c for c in tabla if c != 'Editar'],
                             key=tabla_clave)
     elegidas = [por_orden.get(o) for o, elegido in zip(cart.orden, editada['Editar']) if elegido]
-    if len(elegidas) > 1:
-        st.warning('Elegí una sola fila para editar.')
-        return
+    if elegidas:
+        seleccion = tuple(f['identidad']['instrumento_id'] for f in elegidas if f)
+        lote_clave = clave + '_lote'
+        if st.session_state.get(lote_clave + '_seleccion') != seleccion:
+            st.session_state[lote_clave + '_seleccion'] = seleccion
+            st.session_state[lote_clave] = deepcopy(elegidas)
+        originales = st.session_state[lote_clave]
+        st.markdown('**Editar las filas marcadas**')
+        campo = st.selectbox('Campo a editar', list(ETIQUETAS), format_func=ETIQUETAS.get, key=lote_clave + '_campo')
+        opciones = (vista or {}).get('opciones', ())
+        indice = list(calculos.CAMPOS_CLASIFICACION).index(campo)
+        valores = sorted({o[indice] for o in opciones}, key=lambda x: str(x or ''))
+        nuevo = st.selectbox('Valor nuevo', valores, format_func=lambda x: x or 'Sin dato', key=lote_clave + '_valor_' + campo)
+        cambios = {campo: nuevo}
+        error = ''
+        cantidad = 0
+        try:
+            cantidad = sum(calculos.parche_edicion_ficha(f, cambios, opciones) is not None for f in originales)
+        except (calculos.ErrorClasificacion, TypeError):
+            error = 'El valor no forma una clasificación válida en todas las filas marcadas.'
+            st.warning(error)
+        st.caption(f'{cantidad} de {len(originales)} filas cambian.')
+        distintos = len({f['efectiva'].get('categoria_resumen') for f in originales if f}) > 1
+        confirmado = True
+        if distintos:
+            st.warning('Las filas marcadas pertenecen a rubros distintos.')
+            confirmado = st.checkbox('Confirmo editar filas de rubros distintos',
+                key=lote_clave + '_confirmar_' + str((seleccion, campo, nuevo)))
+        if st.button('Confirmar edición masiva', key=lote_clave + '_guardar',
+                     disabled=bool(motivo or error) or not cantidad or not confirmado):
+            try:
+                resultado = datos.guardar_edicion_ficha_lote(originales, cambios, opciones)
+            except (acceso.ErrorAcceso, calculos.ErrorClasificacion):
+                st.error('No se guardó ninguna fila del lote; recargá y revisá las filas.')
+                return
+            if resultado['estado'] == 'guardado':
+                st.session_state.pop(lote_clave + '_seleccion', None)
+                st.session_state.pop(tabla_clave, None)
+                st.session_state.pop(tabla_clave[:-len(str(todos_marcados))] + '_todos', None)
+                st.session_state[clave + '_lote_resultado'] = f"Se guardaron {resultado['cantidad']} filas."
+                st.rerun()
+            else:
+                st.warning(resultado.get('mensaje', 'No se guardó ninguna fila del lote.'))
+        if len(elegidas) > 1:
+            return
     fila = elegidas[0] if elegidas else None
     if fila is None:
         st.session_state.pop(clave, None)
@@ -176,8 +223,7 @@ if todos.empty:
     st.info("No hay fondos en el catálogo.")
     st.stop()
 filtrados = filtros.mostrar(todos, inicial=inicial_seguimiento)
-busqueda = st.text_input("Buscar por denominación", key="ficha_busqueda")
-filtrados = filtros.buscar_denominacion(filtrados, busqueda)
+filtrados = filtrados.sort_values("nombre", key=lambda s: s.str.casefold())
 codigos = filtrados["codigo_cnv"].tolist()
 if st.session_state.get("ficha_fondo") not in codigos:
     st.session_state["ficha_fondo"] = None
