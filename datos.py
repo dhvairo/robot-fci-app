@@ -409,7 +409,8 @@ def fondos_ficha(incluir_no_seguidos=False):
         return salida
     import acceso
     import rapidez
-    contexto = _contexto_clasificacion(acceso.usuario())      # Auth revalidado en cada clic
+    # Con seguimiento privado el Auth se revalida en cada clic; apagado conserva el camino legado (sin Auth).
+    contexto = _contexto_clasificacion(acceso.usuario()) if privada else None
     return rapidez.memorizar('fondos_ficha', componer, bool(incluir_no_seguidos), bool(privada),
                              contexto=contexto).copy()
 
