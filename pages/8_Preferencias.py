@@ -6,7 +6,7 @@ recarga.al_dia()          # si la app se publicó mientras estaba abierta, se le
 
 import acceso  # noqa: E402
 import calculos  # noqa: E402
-from robot.preferencias_usuario import PAGINAS, ErrorPreferencia  # noqa: E402
+from preferencias_usuario import PAGINAS, ErrorPreferencia  # noqa: E402
 
 st.set_page_config(page_title="Preferencias", page_icon="⚙️", layout="wide")
 

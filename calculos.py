@@ -26,7 +26,7 @@ class ErrorClasificacion(ValueError):
 def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
     """Lectura única por sesión/identidad; guardar actualiza la copia tras commit."""
     from acceso import lector_preferencias
-    from robot.preferencias_usuario import Preferencias, efectivas, ErrorPreferencia
+    from preferencias_usuario import Preferencias, efectivas, ErrorPreferencia
     lector = lector_preferencias()
     if lector is None:
         sesion.pop('preferencias_usuario_cache', None)
@@ -38,7 +38,7 @@ def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
         cambios = efectivas({})['valores']
     try:
         # Validar el lote completo antes de cualquier escritura o actualización local.
-        from robot.preferencias_usuario import plan_guardado
+        from preferencias_usuario import plan_guardado
         if cambios is not None:
             plan_guardado(contexto, cambios)
         cache = sesion.get('preferencias_usuario_cache')
@@ -79,7 +79,7 @@ def resolver_filtro_seguimiento(activa, identidad, preferencias, defecto, elegid
 def filtro_seguimiento_inicial(sesion):
     """Reutiliza la lectura U88; sin identidad/preferencia válida conserva cada pantalla."""
     from acceso import ErrorAcceso
-    from robot.preferencias_usuario import ErrorPreferencia
+    from preferencias_usuario import ErrorPreferencia
     try:
         valores = preferencias_usuario(sesion)
     except (ErrorAcceso, ErrorPreferencia):

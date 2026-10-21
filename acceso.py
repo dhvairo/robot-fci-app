@@ -148,7 +148,7 @@ def lector_preferencias():
             raise ValueError()
         contexto = {'organizacion': persona['organizacion'],
                     'usuario': str(UUID(persona['id']))}
-        from robot.preferencias_usuario import plan_guardado, PostgreSQL
+        from preferencias_usuario import plan_guardado, PostgreSQL
         plan_guardado(contexto, {})
     except Exception:
         st.session_state.pop('preferencias_usuario_cache', None)
