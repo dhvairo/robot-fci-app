@@ -42,7 +42,8 @@ if todos.empty:
     st.stop()
 base = filtros.mostrar(todos, clave="informe", moneda_todos="Todos", inicial=inicial_seguimiento)
 nombres = dict(zip(base.codigo_cnv, base.nombre))
-elegidos = filtros.lista_fondos("Fondos a incluir", nombres, "informe_fondos", nombres)
+elegidos = filtros.lista_fondos("Fondos a incluir", nombres, "informe_fondos",
+                               nombres if modo == "Tomar fondos comparados" else ())
 if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()
