@@ -18,6 +18,7 @@ import marca
 
 st.set_page_config(page_title="Comparador", page_icon="📈", layout="wide")
 acceso.requerir()
+inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Comparador")
 
 st.button("Restablecer", on_click=filtros.restablecer_comparador, args=(st.session_state,))
@@ -26,7 +27,7 @@ todos = datos.fondos_ficha(incluir_no_seguidos=True)
 if todos.empty:
     st.info("No hay fondos en el catálogo.")
     st.stop()
-base = filtros.mostrar(todos, clave="comparador", persistente=True)
+base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento)
 if base.empty:
     st.info("No hay fondos para estos filtros.")
     st.stop()

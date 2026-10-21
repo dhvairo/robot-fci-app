@@ -63,6 +63,16 @@ ESTILO_BASE = {
     "fuente": "Nunito, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 }
 ESTILOS_ORGANIZACION = {"propia": dict(ESTILO_BASE)}
+TEXTOS_PANEL_BASE = {'titulo': 'Administración de organizaciones',
+                     'aviso': 'Esta opción no está disponible.',
+                     'organizaciones': 'Organizaciones', 'usuarios': 'Usuarios y roles',
+                     'validacion': 'Configuración de roles validada.'}
+
+
+def textos_panel():
+    return {**TEXTOS_PANEL_BASE, **(actual().get('textos_superadmin') or {})}
+
+
 COLORES_RUBROS = (("🔴", "#E04B4B"), ("🟠", "#F28E2B"), ("🟡", "#EDC948"),
                   ("🟢", "#59A14F"), ("🔵", "#4E79A7"), ("🟣", "#B07AA1"),
                   ("🟤", "#9C755F"), ("⚫", "#444444"))

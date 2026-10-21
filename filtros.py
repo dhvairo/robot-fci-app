@@ -76,23 +76,26 @@ def opciones(fondos, nivel, anteriores=(), todas_monedas=True):
     return [TODOS[nivel], *sorted(base[CAMPOS[nivel]].dropna().unique())]
 
 
-def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False):
+def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False, inicial=None):
     import streamlit as st
     elegidas = []
     for nivel, (col, etiqueta) in enumerate(zip(st.columns(4), ("Fondos", "Moneda", "Rubro", "Categoría"))):
         valores = opciones(fondos, nivel, elegidas, todas_monedas)
+        if nivel == 0 and inicial is not None:
+            valores = ["Seguidos", "No seguidos", "Todos"]
         if not valores:
             return fondos.iloc[:0]
         if nivel == 1:
             valores = [moneda_todos if v == "Todas" else v for v in valores]
         llave = f"{clave}_filtro_{nivel}"
         memoria = f"{llave}_memoria"
-        if persistente and llave not in st.session_state and memoria in st.session_state:
+        recordar = persistente or (nivel == 0 and inicial is not None)
+        if recordar and llave not in st.session_state and memoria in st.session_state:
             st.session_state[llave] = st.session_state[memoria]
         if st.session_state.get(llave) not in valores:
-            st.session_state[llave] = valores[0]
+            st.session_state[llave] = inicial if nivel == 0 and inicial in valores else valores[0]
         valor = col.selectbox(etiqueta, valores, key=llave)
-        if persistente:
+        if recordar:
             st.session_state[memoria] = valor
         elegidas.append("Todas" if nivel == 1 and valor == moneda_todos else valor)
     return aplicar(fondos, *elegidas)
@@ -107,10 +110,16 @@ def restablecer_informe(sesion):
     sesion["informe_transferencia"] = list(sesion.get(calculos.SELECCION_INFORME, []))
 
 
-def situacion(fondos, clave, defecto="Todos"):
+def situacion(fondos, clave, defecto="Todos", inicial=None):
     import streamlit as st
     opciones = ["Seguidos", "No seguidos", "Todos"]
+    memoria = f"{clave}_memoria"
+    if inicial is not None:
+        elegido = st.session_state.get(clave, st.session_state.get(memoria))
+        st.session_state[clave] = elegido if elegido in opciones else inicial
     valor = st.selectbox("Fondos", opciones, index=opciones.index(defecto), key=clave)
+    if inicial is not None:
+        st.session_state[memoria] = valor
     return aplicar(fondos, situacion=valor)
 
 

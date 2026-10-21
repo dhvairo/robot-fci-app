@@ -1,6 +1,8 @@
 """Acceso a la base para la app: solo lectura, con resultados en caché por 10 minutos."""
 import os
 import json
+from contextlib import contextmanager
+from threading import RLock
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,6 +15,43 @@ import calculos  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent
 load_dotenv(RAIZ / ".env")
+
+
+class _ConexionCompartida:
+    """Un recurso por configuración, serializado; GUC solo en transacciones."""
+    def __init__(self):
+        self.lock = RLock()
+        self.conn = None
+
+
+@st.cache_resource(show_spinner=False)
+def _recurso_conexion(args, opciones):
+    return _ConexionCompartida()
+
+
+@contextmanager
+def conexion_compartida(*args, **opciones):
+    import acceso
+    # Los contratos de consola/dobles conservan su conector independiente.
+    if acceso._estado_rerun() is None:
+        with calculos.medir_seguimiento('CONEXION'):
+            conn = psycopg.connect(*args, **opciones)
+        with conn as abierta:
+            yield abierta
+        return
+    recurso = _recurso_conexion(args, tuple(sorted(opciones.items())))
+    with recurso.lock:
+        with calculos.medir_seguimiento('CONEXION'):
+            if recurso.conn is None or recurso.conn.closed or recurso.conn.broken:
+                recurso.conn = psycopg.connect(*args, **opciones, autocommit=True)
+            conn = recurso.conn
+        try:
+            with conn.transaction():
+                yield conn
+        except BaseException:
+            conn.close()
+            recurso.conn = None
+            raise
 
 
 def _url():
@@ -28,7 +67,7 @@ def _ejecutar(sql, params=None):
     if not url:
         st.error("Falta APP_DB_URL (archivo .env o secretos de la app).")
         st.stop()
-    with psycopg.connect(url, connect_timeout=20) as conn:
+    with conexion_compartida(url, connect_timeout=20) as conn, calculos.medir_seguimiento('CONSULTA_COMUN'):
         cur = conn.execute(sql, params)
         columnas = [c.name for c in cur.description]
         df = pd.DataFrame(cur.fetchall(), columns=columnas)
@@ -48,7 +87,7 @@ def _personal(persona, sql, params=()):
     Sin caché global: jamás mezcla organizaciones ni dueños.
     """
     try:
-        with psycopg.connect(_url(), connect_timeout=20) as conn:
+        with conexion_compartida(_url(), connect_timeout=20) as conn, calculos.medir_seguimiento('CONSULTA_PERSONAL'):
             conn.execute("select set_config('app.organizacion', %s, true), "
                          "set_config('app.dueno', %s, true)", (persona["organizacion"], persona["id"]))
             return conn.execute(sql, params).fetchall()
@@ -57,6 +96,11 @@ def _personal(persona, sql, params=()):
 
 
 def organizacion(persona):
+    import acceso
+    return acceso.lectura_privada('marca', persona, lambda: _organizacion_sin_cache(persona))
+
+
+def _organizacion_sin_cache(persona):
     columnas = ("id", "nombre", "logo", "color_principal", "color_secundario", "texto_legal")
     filas = _personal(persona, "select id,nombre,logo,color_principal,color_secundario,texto_legal "
                       "from public.organizaciones where id=%s", (persona["organizacion"],))
@@ -86,8 +130,8 @@ CLASIFICACION_DESHABILITADA = "La clasificación por organización no está disp
 class RepositorioSeguimiento:
     """U40, desconectado: registro y conector explícitos del servidor, nunca formulario.
 
-    Sin URL predeterminada ni caché. El conector futuro debe usar el rol acotado
-    de app o de operador; no reutilizar conexiones privilegiadas/productivas.
+    Sin URL predeterminada; lectura corta por sesión y contexto revalidado.
+    El conector de la app reutiliza exclusivamente su rol acotado.
     """
     def __init__(self, registro=None, conectar=None):
         self.registro = dict(registro or {})
@@ -95,13 +139,17 @@ class RepositorioSeguimiento:
 
     def _operar(self, par, funcion):
         import acceso
+        motivo = 'CONTEXTO'
         try:
             contexto = acceso.requerir_contexto_seguimiento(self.registro)
+            motivo = 'PAR'
             if tuple(par) != (contexto['organizacion'], contexto['dueno']):
                 raise calculos.ErrorSeguimiento('DUENO_AJENO')
             if self.conectar is None:
                 raise calculos.ErrorSeguimiento('PERSISTENCIA_NO_CONFIGURADA')
+            motivo = 'CONEXION'
             with self.conectar() as conn:
+                motivo = 'GUC'
                 conn.execute("select set_config('seguimiento.organizacion', %s, true), "
                              "set_config('seguimiento.dueno', %s, true), "
                              "set_config('seguimiento.usuario', %s, true), "
@@ -109,11 +157,16 @@ class RepositorioSeguimiento:
                              "set_config('seguimiento.version_clave', %s, true)",
                              tuple(contexto[k] for k in
                                    ('organizacion', 'dueno', 'usuario', 'rol', 'version_clave')))
-                resultado = funcion(conn, contexto)
+                motivo = 'OPERACION'
+                with calculos.medir_seguimiento('CONSULTA_SEGUIMIENTO'):
+                    resultado = funcion(conn, contexto)
+                motivo = 'COMMIT'
             return resultado  # Solo después del commit, incluso si este falla.
-        except calculos.ErrorSeguimiento:
+        except calculos.ErrorSeguimiento as error:
+            calculos.registrar_fallo_seguimiento('PERSISTENCIA', motivo, error)
             raise
-        except Exception:
+        except Exception as error:
+            calculos.registrar_fallo_seguimiento('PERSISTENCIA', motivo, error)
             raise calculos.ErrorSeguimiento('PERSISTENCIA_FALLIDA') from None
 
     @staticmethod
@@ -123,7 +176,18 @@ class RepositorioSeguimiento:
         return calculos._filas_seguimiento(estado, contexto)
 
     def leer(self, par):
-        return self._operar(par, self._leer)
+        import acceso
+        try:
+            contexto = acceso.requerir_contexto_seguimiento(self.registro)
+            if tuple(par) != (contexto['organizacion'], contexto['dueno']):
+                raise calculos.ErrorSeguimiento('DUENO_AJENO')
+            return acceso.lectura_privada(('seguimiento', getattr(self, 'clave_cache', id(self))),
+                                          contexto, lambda: self._operar(par, self._leer))
+        except calculos.ErrorSeguimiento:
+            raise
+        except Exception as error:
+            calculos.registrar_fallo_seguimiento('PERSISTENCIA', 'CONTEXTO', error)
+            raise calculos.ErrorSeguimiento('PERSISTENCIA_FALLIDA') from None
 
     def transaccion(self, par, funcion):
         from copy import deepcopy
@@ -150,7 +214,11 @@ class RepositorioSeguimiento:
                 raise calculos.ErrorSeguimiento('TRANSICION_INVALIDA')
             return resultado
 
-        return self._operar(par, anotar)
+        import acceso
+        try:
+            return self._operar(par, anotar)
+        finally:
+            acceso.invalidar_lecturas_privadas()
 
     def confirmar(self, par, clave, preparado=False):
         """Entrada reservada al futuro operador SQL, sin llamadas desde pantallas."""
@@ -164,7 +232,11 @@ class RepositorioSeguimiento:
                 raise calculos.ErrorSeguimiento('CONFIRMACION_INVALIDA')
             return estado
 
-        return self._operar(par, confirmar)
+        import acceso
+        try:
+            return self._operar(par, confirmar)
+        finally:
+            acceso.invalidar_lecturas_privadas()
 
 
 def _contexto_clasificacion(persona=None, escritura=False):
@@ -172,12 +244,16 @@ def _contexto_clasificacion(persona=None, escritura=False):
     import acceso
     if escritura:
         return acceso.requerir_admin_clasificacion()
+    if acceso.roles_activos():
+        c = acceso.configuracion_seguimiento()
+        return acceso.requerir_contexto_seguimiento(c.get('registro'))
     anterior = dict(acceso.usuario() or {})
     actual = acceso._validar_sesion()
     if (persona != actual or anterior.get("id") != actual.get("id")
             or anterior.get("organizacion") != actual.get("organizacion")
             or actual.get("cambio_obligatorio") or not actual.get("version_clave")
-            or actual.get("rol") not in ("admin", "asesor")
+            or actual.get("rol") not in (('admin', 'asesor', 'cliente') if acceso.roles_activos()
+                                        else ('admin', 'asesor'))
             or actual.get("organizacion") != "propia"):
         raise acceso.ErrorAcceso("Usuario sin acceso autorizado.")
     return {"organizacion": actual["organizacion"], "dueno": "equipo",
@@ -185,9 +261,9 @@ def _contexto_clasificacion(persona=None, escritura=False):
 
 
 def _clasificacion_transaccion(contexto, operacion, solo_lectura=False):
-    """Conexión propia, sin caché; commit al salir o rollback antes de informar fallo."""
+    """Transacción propia, conexión reutilizable; rollback antes de informar fallo."""
     try:
-        with psycopg.connect(_url(), connect_timeout=20) as conn:
+        with conexion_compartida(_url(), connect_timeout=20) as conn:
             if solo_lectura:
                 conn.execute('set transaction isolation level repeatable read, read only')
             conn.execute("select set_config('app.organizacion', %s, true), "
@@ -195,7 +271,11 @@ def _clasificacion_transaccion(contexto, operacion, solo_lectura=False):
                          "set_config('app.usuario', %s, true), "
                          "set_config('app.rol', %s, true)",
                          tuple(contexto[k] for k in ("organizacion", "dueno", "usuario", "rol")))
-            resultado = operacion(conn)
+            with calculos.medir_seguimiento('CONSULTA_CLASIFICACION'):
+                resultado = operacion(conn)
+            if not solo_lectura:
+                import acceso
+                acceso.invalidar_lecturas_privadas()
         return resultado
     except Exception as error:
         if getattr(error, "sqlstate", None) in ("42P01", "42883", "3F000"):
@@ -262,7 +342,13 @@ def componer_carteras_organizacion(filas_fuente):
 
 
 def vista_carteras():
-    """Carga común compartida; composición privada nueva en cada ejecución autenticada.
+    import acceso
+    contexto = _contexto_clasificacion(acceso.usuario())
+    return acceso.lectura_privada('vista_carteras', contexto, _vista_carteras_sin_cache)
+
+
+def _vista_carteras_sin_cache():
+    """Carga común compartida; composición privada de sesión por hasta 30 segundos.
 
     Solo consultar tiene caché global. La vista se pasa entre consumidores de una
     pantalla para que filtros, tablas y PDF usen exactamente el mismo snapshot.
@@ -670,7 +756,7 @@ def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None
     if not url:
         raise ErrorPedido("Falta PEDIDOS_DB_URL o APP_DB_URL (archivo .env o secretos de la app): no se puede anotar el pedido.")
     try:
-        with psycopg.connect(url, connect_timeout=20) as conn:
+        with conexion_compartida(url, connect_timeout=20) as conn:
             fila = conn.execute(
                 "insert into pedidos_fondos (codigo_cnv, accion, descripcion_breve, idea_tematica, id_ficha_cnv) "
                 "values (%s, %s, %s, %s, %s) returning id",

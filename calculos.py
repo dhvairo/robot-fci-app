@@ -1,6 +1,10 @@
 """Lógica de las pantallas que se puede probar sin Streamlit ni base: filtros, períodos y cabecera de la ficha."""
 import unicodedata
 import json
+import logging
+import re
+import time
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import timedelta
 
@@ -17,6 +21,73 @@ CAMPOS_IDENTIDAD = ("codigo_cnv", "rubro_cnv_original", "instrumento_original",
 
 class ErrorClasificacion(ValueError):
     """Código fijo, sin contenido de las entradas."""
+
+
+def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
+    """Lectura única por sesión/identidad; guardar actualiza la copia tras commit."""
+    from acceso import lector_preferencias
+    from robot.preferencias_usuario import Preferencias, efectivas, ErrorPreferencia
+    lector = lector_preferencias()
+    if lector is None:
+        sesion.pop('preferencias_usuario_cache', None)
+        return None
+    backend, contexto = lector
+    identidad = (contexto['organizacion'], contexto['usuario'])
+    repo = Preferencias(backend)
+    if restablecer:
+        cambios = efectivas({})['valores']
+    try:
+        # Validar el lote completo antes de cualquier escritura o actualización local.
+        from robot.preferencias_usuario import plan_guardado
+        if cambios is not None:
+            plan_guardado(contexto, cambios)
+        cache = sesion.get('preferencias_usuario_cache')
+        if cache is None or cache['identidad'] != identidad:
+            # Conservar presencia de claves: un default no es una preferencia guardada.
+            cache = {'identidad': identidad, 'guardadas': backend.leer(identidad)}
+            sesion['preferencias_usuario_cache'] = cache
+            try:
+                cache['resultado'] = efectivas(cache['guardadas'])
+            except ErrorPreferencia as error:
+                cache['error'] = error.motivo
+        if 'error' in cache:
+            raise ErrorPreferencia(cache['error'])
+        if cambios is not None:
+            repo.guardar(contexto, cambios)
+            # Sesiones abiertas con U88 aún no conservan las claves explícitas.
+            cache.setdefault('guardadas', {}).update(deepcopy(cambios))
+            cache['resultado'] = efectivas({**cache['resultado']['valores'], **cambios})
+        return deepcopy(cache['resultado']['valores'])
+    except ErrorPreferencia:
+        raise
+    except Exception:
+        raise ErrorPreferencia('operacion_preferencias_fallida') from None
+
+
+def resolver_filtro_seguimiento(activa, identidad, preferencias, defecto, elegido=None):
+    """Resolución pura: elección de sesión, preferencia explícita o default previo."""
+    etiquetas = {'seguidos': 'Seguidos', 'no_seguidos': 'No seguidos', 'todos': 'Todos'}
+    if elegido in etiquetas.values():
+        return elegido
+    if activa is True and identidad and isinstance(preferencias, dict):
+        valor = preferencias.get('filtro_seguimiento')
+        if isinstance(valor, str) and valor in etiquetas:
+            return etiquetas[valor]
+    return defecto
+
+
+def filtro_seguimiento_inicial(sesion):
+    """Reutiliza la lectura U88; sin identidad/preferencia válida conserva cada pantalla."""
+    from acceso import ErrorAcceso
+    from robot.preferencias_usuario import ErrorPreferencia
+    try:
+        valores = preferencias_usuario(sesion)
+    except (ErrorAcceso, ErrorPreferencia):
+        return None
+    if valores is None:
+        return None
+    cache = sesion['preferencias_usuario_cache']
+    return resolver_filtro_seguimiento(True, cache['identidad'], cache.get('guardadas'), None)
 
 
 def _normalizar_componente(valor):
@@ -785,19 +856,44 @@ class ErrorSeguimiento(ValueError):
     """Rechazo o fallo explícito; nunca representa una operación aplicada."""
 
 
+@contextmanager
+def medir_seguimiento(etapa):
+    """Solo etapa fija y duración; sin SQL, valores ni identidades."""
+    inicio = time.perf_counter()
+    try:
+        yield
+    finally:
+        logging.getLogger('seguimiento').log(
+            logging.WARNING, 'SEGUIMIENTO TIEMPO %s %.3f_ms', etapa, (time.perf_counter() - inicio) * 1000)
+
+
+def registrar_fallo_seguimiento(etapa, motivo, error):
+    """Solo códigos internos y SQLSTATE; nunca mensajes, parámetros ni traceback."""
+    estado = getattr(error, 'sqlstate', None)
+    estado = estado if isinstance(estado, str) and re.fullmatch(r'[0-9A-Z]{5}', estado) else 'SIN_SQLSTATE'
+    logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO %s %s %s', etapa, motivo, estado)
+
+
 def _contexto_seguimiento(resolver):
     # Resolver confiable del servidor, no una identidad enviada por el navegador.
     if resolver is None:
         from acceso import requerir_contexto_seguimiento
         resolver = requerir_contexto_seguimiento
+    motivo = 'RESOLVER'
     try:
         contexto = resolver()
-        if (any(not isinstance(contexto.get(k), str) or not contexto[k].strip()
-                for k in ("organizacion", "dueno", "usuario", "version_clave"))
-                or contexto.get("rol") not in ("admin", "asesor")):
-            raise ValueError
+        for campo in ('organizacion', 'dueno', 'usuario', 'version_clave'):
+            motivo = 'CAMPO_' + campo.upper()
+            if not isinstance(contexto.get(campo), str) or not contexto[campo].strip():
+                raise ValueError()
+        motivo = 'ROL'
+        if (contexto.get('rol') not in ('admin', 'asesor')
+                and not (contexto.get('rol') == 'cliente'
+                         and contexto.get('roles_permisos') is True)):
+            raise ValueError()
         return contexto
-    except Exception:
+    except Exception as error:
+        registrar_fallo_seguimiento('CONTEXTO', motivo, error)
         raise ErrorSeguimiento("CONTEXTO_RECHAZADO") from None
 
 
@@ -889,11 +985,22 @@ def tabla_pedidos_seguimiento(pedidos, catalogo, limite):
     nombres = {f['codigo_cnv']: f.get('nombre') for f in catalogo}
     columnas = ['id', 'codigo_cnv', 'fondo', 'accion', 'descripcion_breve', 'idea_tematica',
                 'id_ficha_cnv', 'estado', 'motivo', 'pedido_en', 'procesado_en']
+    normalizados = []
+    for pedido in pedidos:
+        legado = pedido.get('pedido_legado') or {}
+        p = dict(legado)
+        for nuevo, viejo in (('descripcion', 'descripcion_breve'), ('idea', 'idea_tematica'),
+                             ('id_ficha', 'id_ficha_cnv')):
+            p[nuevo] = legado.get(viejo)
+        p.update(pedido)
+        p.setdefault('codigo_cnv', None)
+        p.setdefault('accion', None)
+        normalizados.append(p)
     filas = [dict(id=i, codigo_cnv=p['codigo_cnv'], fondo=nombres.get(p['codigo_cnv']),
                   accion=p['accion'], descripcion_breve=p.get('descripcion'),
                   idea_tematica=p.get('idea'), id_ficha_cnv=p.get('id_ficha'),
                   estado=p['estado'], motivo=p.get('motivo'), pedido_en=p.get('pedido_en'),
-                  procesado_en=p.get('procesado_en')) for i, p in enumerate(pedidos, 1)]
+                  procesado_en=p.get('procesado_en')) for i, p in enumerate(normalizados, 1)]
     return pd.DataFrame(filas, columns=columnas).tail(limite).iloc[::-1]
 
 
@@ -938,6 +1045,23 @@ def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
 
     def anotar(estado):
         _filas_seguimiento(estado, contexto)
+        if contexto.get('roles_permisos') is True:
+            from permisos import permitido
+            accion_permiso = {'seguir': 'pedir_seguir', 'dejar': 'pedir_dejar',
+                              'editar_tematica': 'editar_texto_propio'}[accion]
+            propio = any(p.get('codigo_cnv') == codigo and p.get('accion') == 'seguir'
+                         and p.get('usuario') == contexto['usuario'] for p in estado['pedidos'])
+            dato = {**contexto, 'usuario': contexto['usuario'] if propio else None}
+            if accion == 'editar_tematica' and not propio:
+                accion_permiso = 'editar_texto_ajeno'
+            if not permitido(contexto['rol'], accion_permiso, dato,
+                             contexto['usuario'], contexto['organizacion']):
+                # Administrador puede editar incluso un fondo sin autor registrado.
+                if not (contexto['rol'] == 'admin' and accion == 'editar_tematica'):
+                    raise ErrorSeguimiento('PERMISO_DENEGADO')
+            if (contexto['rol'] == 'asesor' and accion == 'seguir' and campos and not propio
+                    and any(f['codigo_cnv'] == codigo for f in estado['elecciones'])):
+                raise ErrorSeguimiento('PERMISO_DENEGADO')
         for pedido in estado["pedidos"]:
             if pedido["clave"] == clave:
                 if any(pedido.get(k) != v for k, v in intencion.items()):

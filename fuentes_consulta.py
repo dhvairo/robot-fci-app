@@ -6,6 +6,7 @@ No incluye ejecutores, conexiones ni escritura de archivos.
 import csv
 import html
 import html as _html
+import json
 import re
 import unicodedata
 from bisect import bisect_right
@@ -15,6 +16,8 @@ from decimal import Decimal
 from pathlib import Path
 
 RUTA_REGLAS = Path(__file__).with_name("reglas_clasificacion.csv")
+EQUIVALENCIAS_GERENTES = json.loads(
+    Path(__file__).with_name("equivalencias_gerentes.json").read_text(encoding="utf-8"))
 SIN_CLASIFICAR = "sin clasificar"
 NO_CUENTAN = {"Pasivos", SIN_CLASIFICAR}
 TOLERANCIA_CAFCI = Decimal("0.01")
@@ -91,6 +94,10 @@ def leer_clasificacion(texto_html):
     return (_limpiar(m.group(1)) or None) if m else None
 
 # Fuente: robot/ficha_cnv.py
+ALIAS_NOMBRES = json.loads(
+    Path(__file__).with_name("alias_nombres_fondos.json").read_text(encoding="utf-8"))
+
+
 def normalizar_nombre(texto):
     """'GALILEO PREMIUM FCI', 'Galileo Premium' y 'Gainvest FF Ex GAINVEST FIDE...' se comparan sin tildes ni relleno."""
     t = _html.unescape(texto or "").replace("\xa0", " ")
@@ -99,6 +106,7 @@ def normalizar_nombre(texto):
     except (UnicodeEncodeError, UnicodeDecodeError):
         pass
     t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode().lower()
+    t = re.sub(r"\s+", " ", t).strip()
     t = re.sub(r"\bex\b.*$", "", t)                    # "... Ex NOMBRE VIEJO"
     t = re.sub(r"\bf\.?\s?c\.?\s?i\.?\b", " ", t)      # FCI, F.C.I., FC.I.
     t = re.sub(r"fondos? comun(?:es)? de inversion", " ", t)
@@ -118,7 +126,9 @@ def leer_lista(texto_html):
 def buscar_id(nombre, lista):
     """Devuelve (id_ficha, None) si hay UN solo fondo con ese nombre; si no, (None, motivo)."""
     clave = normalizar_nombre(nombre)
-    coinciden = [(i, n) for i, n in lista if normalizar_nombre(n) == clave]
+    clave = next((normalizar_nombre(destino) for origen, destino in ALIAS_NOMBRES.items()
+                  if normalizar_nombre(origen) == clave), clave)
+    coinciden = [(i, n) for i, n in lista if clave and normalizar_nombre(n) == clave]
     if len(coinciden) == 1:
         return coinciden[0][0], None
     if not coinciden:
@@ -133,11 +143,17 @@ def gerente_de_ficha(texto_html):
 
 def misma_gerente(a, b):
     """Dos nombres de sociedad gerente se consideran iguales si empiezan con la misma palabra (la marca) y las palabras
-    de uno están todas en el otro (sin tildes, sin "S.A.", "SAU" ni "Sociedad Gerente de Fondos Comunes de Inversión")."""
+    de uno están todas en el otro (sin tildes, sin "S.A.", "SAU" ni "Sociedad Gerente de Fondos Comunes de Inversión").
+    Solo las marcas de la tabla de configuración se consideran equivalentes."""
     def palabras(t):
         t = normalizar_nombre(t)
         return [w for w in t.split() if w not in ("s", "a", "u", "sa", "sau")]
     x, y = palabras(a or ""), palabras(b or "")
+    for grupo in EQUIVALENCIAS_GERENTES:
+        marcas = [normalizar_nombre(m) for m in grupo]
+        for p in (x, y):
+            if p and p[0] in marcas:
+                p[0] = marcas[0]
     return bool(x) and bool(y) and x[0] == y[0] and (set(x) <= set(y) or set(y) <= set(x))
 
 # Fuente: robot/clasificar.py

@@ -13,6 +13,7 @@ import filtros  # noqa: E402
 
 st.set_page_config(page_title="Gestión y eficiencia", page_icon="📈", layout="wide")
 acceso.requerir()
+inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Gestión y eficiencia")
 st.caption("Todos los fondos del catálogo de la CAFCI. Los datos son los de la última planilla diaria; "
            "el rendimiento a 12 meses ya es neto de honorarios y gastos.")
@@ -24,7 +25,7 @@ if todas.empty:
     st.stop()
 
 # ───────── Filtros ─────────
-catalogo = filtros.situacion(catalogo_completo, "gestion_situacion")
+catalogo = filtros.situacion(catalogo_completo, "gestion_situacion", inicial=inicial_seguimiento)
 todas = todas[todas.codigo_cnv.isin(catalogo.codigo_cnv)]
 moneda = st.radio("Moneda", calculos.OPCIONES_MONEDA, horizontal=True,
                   index=0,

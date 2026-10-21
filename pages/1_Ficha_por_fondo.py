@@ -156,6 +156,7 @@ GRIS = marca.RUBRO_GRIS
 
 st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide")
 acceso.requerir()
+inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Ficha por fondo")
 
 st.button("Restablecer", on_click=filtros.restablecer_ficha, args=(st.session_state,))
@@ -166,7 +167,7 @@ if todos.empty:
     st.session_state["ficha_fondo"] = None
     st.info("No hay fondos en el catálogo.")
     st.stop()
-filtrados = filtros.mostrar(todos)
+filtrados = filtros.mostrar(todos, inicial=inicial_seguimiento)
 busqueda = st.text_input("Buscar por denominación", key="ficha_busqueda")
 filtrados = filtros.buscar_denominacion(filtrados, busqueda)
 codigos = filtrados["codigo_cnv"].tolist()

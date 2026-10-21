@@ -16,6 +16,7 @@ import marca  # noqa: E402
 
 st.set_page_config(page_title="Informe descriptivo", page_icon="📈", layout="wide")
 acceso.requerir()
+inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Informe descriptivo")
 st.caption("Composición de la última cartera disponible de los fondos seleccionados (fuente: CNV).")
 st.button("Restablecer", on_click=filtros.restablecer_informe, args=(st.session_state,))
@@ -38,7 +39,7 @@ if modo == "Tomar fondos comparados":
 if todos.empty:
     st.info("No hay fondos disponibles para este modo.")
     st.stop()
-base = filtros.mostrar(todos, clave="informe", moneda_todos="Todos")
+base = filtros.mostrar(todos, clave="informe", moneda_todos="Todos", inicial=inicial_seguimiento)
 nombres = dict(zip(base.codigo_cnv, base.nombre))
 elegidos = filtros.casillas("Fondos a incluir", nombres, "informe_casillas_" + modo,
                             formato=nombres.get, preferidas=nombres)
