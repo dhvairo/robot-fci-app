@@ -401,7 +401,8 @@ SELECCION_INFORME = "informe_desde_comparador"
 def enviar_al_informe(sesion, codigos):
     sesion[SELECCION_INFORME] = list(dict.fromkeys(int(c) for c in codigos))
     # Un pase nuevo también restaura los elegidos si el Informe editó la misma lista antes.
-    sesion.pop('informe_transferencia', None)
+    if 'informe_transferencia' in sesion:
+        del sesion['informe_transferencia']
 
 
 def historia_comparador(fondos, clases, leer_serie, cargar_puntual):
