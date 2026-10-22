@@ -23,7 +23,9 @@ st.caption("Composición de la última cartera disponible de los fondos seleccio
 st.button("Restablecer", on_click=filtros.restablecer_informe, args=(st.session_state,))
 transferencia = st.session_state.get(calculos.SELECCION_INFORME, [])
 # Un nuevo pase abre el modo comparados; las siguientes corridas conservan los controles propios.
-if transferencia and st.session_state.get("informe_transferencia") != transferencia:
+if not transferencia:
+    st.session_state.pop("informe_transferencia", None)
+elif st.session_state.get("informe_transferencia") != transferencia:
     filtros.restablecer_informe(st.session_state)
     st.session_state["informe_transferencia"] = list(transferencia)
     st.session_state["informe_modo"] = "Tomar fondos comparados"

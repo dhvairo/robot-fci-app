@@ -23,11 +23,11 @@ def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=()
         general = f"{clave}_todas"
 
         def guardar(v):
-            memoria[v] = st.session_state[llaves[v]]
+            memoria[v] = st.session_state.get(llaves[v], False)
 
         def marcar_visibles():
             for v in visibles:
-                memoria[v] = st.session_state[general]
+                memoria[v] = st.session_state.get(general, False)
 
         st.markdown(f"**{etiqueta}**")
         st.session_state[general] = bool(visibles) and all(memoria[v] for v in visibles)
@@ -46,7 +46,7 @@ def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=()
 
     def marcar():
         for llave in llaves.values():
-            st.session_state[llave] = st.session_state[general]
+            st.session_state[llave] = st.session_state.get(general, False)
 
     st.markdown(f"**{etiqueta}**")
     st.checkbox(todas, key=general, on_change=marcar)
@@ -113,17 +113,17 @@ def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", per
     return aplicar(fondos, *elegidas)
 
 
-def lista_fondos(etiqueta, nombres, clave, defecto=()):
+def lista_fondos(etiqueta, nombres, clave, defecto=(), vacio_todos=True):
     """Búsqueda nativa y selección con ×; memoria independiente de la vida del widget."""
     import streamlit as st
     opciones = sorted(nombres, key=lambda c: (nombres[c].casefold(), str(c)))
     memoria = clave + '_memoria'
     anterior = st.session_state.get(clave, st.session_state.get(memoria, list(defecto)))
-    st.session_state[clave] = [c for c in anterior if c in nombres]
+    st.session_state[clave] = [c for c in anterior if c in nombres] if isinstance(anterior, list) else []
     elegidos = st.multiselect(etiqueta, opciones, key=clave, format_func=nombres.get,
-                             placeholder="Todos · escribí para buscar")
+                             placeholder="Todos · escribí para buscar" if vacio_todos else "Escribí para buscar fondos")
     st.session_state[memoria] = list(elegidos)
-    return elegidos or opciones
+    return (elegidos or opciones) if vacio_todos else elegidos
 
 
 def restablecer_informe(sesion):
@@ -154,7 +154,8 @@ def buscar_denominacion(fondos, texto):
 
 
 def restablecer_comparador(sesion):
-    """Comienza otra comparación; no toca el pase al Informe ni preferencias."""
+    """Comienza otra comparación vacía y retira el pase al Informe."""
+    sesion.pop(calculos.SELECCION_INFORME, None)
     for llave in list(sesion):
         if llave.startswith("comparador_"):
             del sesion[llave]

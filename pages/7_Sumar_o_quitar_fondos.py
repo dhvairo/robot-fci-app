@@ -62,15 +62,15 @@ if desde_ficha is not None:
     if not elegido.empty:
         st.session_state["buscar_fondos"] = elegido.iloc[0]["nombre"]
         st.session_state["fondo_elegido"] = desde_ficha
-        st.session_state.update(pedidos_moneda="Todas", pedidos_situacion="Todos",
+        st.session_state.update(pedidos_moneda="Todas", pedidos_modo="Quitar" if elegido.iloc[0]['seguido'] else "Sumar",
                                 pedidos_tipos=[], pedidos_rubros=[])
+modo = st.radio('Acción', ['Sumar', 'Quitar'], horizontal=True, key='pedidos_modo')
 texto = st.text_input("Nombre del fondo o de la gerente", placeholder="Por ejemplo: galileo, compass, premium...",
                       key="buscar_fondos")
 c1, c2, c3 = st.columns(3)
 moneda = c1.radio("Moneda", ("Todas", *calculos.OPCIONES_MONEDA), horizontal=True,
                   index=0, key="pedidos_moneda")
-situacion = c2.radio("Situación", ("Todos", "Seguidos", "No seguidos"), horizontal=True,
-                     key="pedidos_situacion")
+situacion = 'Seguidos' if modo == 'Quitar' else 'No seguidos'
 c3.caption(f"{int(catalogo['seguido'].sum())} fondos seguidos de {len(catalogo):,}".replace(",", "."))
 c4, c5 = st.columns(2)
 tipos = c4.multiselect("Tipo de fondo", sorted(catalogo["tipo_fondo"].dropna().unique()), placeholder="Todos",

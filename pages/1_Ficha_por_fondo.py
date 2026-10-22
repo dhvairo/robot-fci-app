@@ -84,19 +84,24 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
     filas = [f for f in (vista or {}).get('filas', []) if f['codigo_cnv'] == codigo]
     por_orden = {f['orden']: f for f in filas}
     # El índice de tabla solo presenta; la elección guarda el UUID y snapshot completos.
-    tabla = cart.drop(columns=['orden']).copy()
-    tabla = tabla[[c for c in ('rubro_cnv', 'instrumento', 'pct_pn',
-                              *calculos.CAMPOS_CLASIFICACION, 'sin_clasificar') if c in tabla]]
-    tabla = tabla.rename(columns={'rubro_cnv': 'Rubro CNV', 'instrumento': 'Instrumento',
-                                  'pct_pn': '% del PN', 'sin_clasificar': 'Sin clasificar', **ETIQUETAS})
-    tabla['Fecha'] = formato.fecha(fecha)
-    tabla['Procedencia'] = [por_orden.get(o, {}).get('procedencia', 'fuente') for o in cart.orden]
-    tabla['Novedad de fuente'] = ['Pendiente' if por_orden.get(o, {}).get('pendiente') else ''
-                                for o in cart.orden]
-    tabla['Motivo'] = [motivo or por_orden.get(o, {}).get('bloqueo') or '' for o in cart.orden]
-    for campo in calculos.CAMPOS_CLASIFICACION:
-        tabla[f'{ETIQUETAS[campo]} original'] = [por_orden.get(o, {}).get(campo) for o in cart.orden]
-    tabla = formato.tabla(tabla, numeros={'% del PN': 2}, booleanos=['Sin clasificar'])
+    def preparar_tabla_edicion():
+        tabla = cart.drop(columns=['orden']).copy()
+        tabla = tabla[[c for c in ('rubro_cnv', 'instrumento', 'pct_pn',
+                                  *calculos.CAMPOS_CLASIFICACION, 'sin_clasificar') if c in tabla]]
+        tabla = tabla.rename(columns={'rubro_cnv': 'Rubro CNV', 'instrumento': 'Instrumento',
+                                      'pct_pn': '% del PN', 'sin_clasificar': 'Sin clasificar', **ETIQUETAS})
+        tabla['Fecha'] = formato.fecha(fecha)
+        tabla['Procedencia'] = [por_orden.get(o, {}).get('procedencia', 'fuente') for o in cart.orden]
+        tabla['Novedad de fuente'] = ['Pendiente' if por_orden.get(o, {}).get('pendiente') else ''
+                                    for o in cart.orden]
+        tabla['Motivo'] = [motivo or por_orden.get(o, {}).get('bloqueo') or '' for o in cart.orden]
+        for campo in calculos.CAMPOS_CLASIFICACION:
+            tabla[f'{ETIQUETAS[campo]} original'] = [por_orden.get(o, {}).get(campo) for o in cart.orden]
+        tabla = formato.tabla(tabla, numeros={'% del PN': 2}, booleanos=['Sin clasificar'])
+        return tabla
+    tabla = memorizar('ficha_tabla_edicion', preparar_tabla_edicion, codigo, str(fecha),
+        tuple(cart.orden), motivo,
+        repr([(f['orden'], f.get('procedencia'), f.get('pendiente'), f.get('bloqueo')) for f in filas])).copy()
     tabla.insert(0, 'Editar', False)
     clave = f"ficha_edicion_{persona.get('id')}_{persona.get('organizacion')}_{codigo}_{fecha}"
     if clave + '_lote_resultado' in st.session_state:

@@ -6,6 +6,26 @@ escribir (acceso.invalidar_lecturas_privadas) o a los 5 minutos. Las pantallas s
 import streamlit as st
 
 
+def grafico_memorizado(clave, figura, *seleccion):
+    """Serializa una vez el gráfico de lectura, como la tabla memorizada."""
+    import plotly.io
+    from streamlit.proto.PlotlyChart_pb2 import PlotlyChart as PlotlyChartProto
+    from streamlit.elements.lib.layout_utils import LayoutConfig
+    from streamlit.elements.lib.utils import compute_and_register_element_id
+
+    def construir():
+        proto = PlotlyChartProto()
+        proto.theme = 'streamlit'
+        proto.spec = plotly.io.to_json(figura, validate=False)
+        proto.config = '{}'
+        return proto
+    proto = memorizar(clave + '_grafico', construir, *seleccion)
+    proto.id = compute_and_register_element_id('plotly_chart', user_key=clave, key_as_main_identity=False,
+        dg=st._main, plotly_spec=proto.spec, plotly_config=proto.config,
+        theme='streamlit', width='stretch', height='content')
+    return st._main._enqueue('plotly_chart', proto, layout_config=LayoutConfig(width='stretch'))
+
+
 def tabla_memorizada(clave, tabla, *seleccion):
     """Conserva también la serialización del Styler, privada por sesión.
 

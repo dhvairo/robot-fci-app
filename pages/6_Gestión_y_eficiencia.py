@@ -132,7 +132,7 @@ if activa:
         st.caption("Todas las clases de la tabla entran al ranking.")
     else:
         st.caption(" · ".join(f"{m}: {formato.entero(n)}" for m, n in vista_tablas["motivos"].items()))
-        st.dataframe(vista_tablas["tabla_afuera"], hide_index=True, width="stretch")
+        rapidez.tabla_memorizada("gestion_tabla_afuera", vista_tablas["tabla_afuera"], firma, activa)
     st.markdown(
         "**Cómo se calculó**\n\n"
         "- Cada clase se compara **solo con las clases del mismo tipo de fondo y de la misma moneda** que están en la "

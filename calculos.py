@@ -399,21 +399,32 @@ SELECCION_INFORME = "informe_desde_comparador"
 
 
 def enviar_al_informe(sesion, codigos):
-    sesion[SELECCION_INFORME] = list(dict.fromkeys(int(c) for c in codigos))
-    # Un pase nuevo también restaura los elegidos si el Informe editó la misma lista antes.
-    if 'informe_transferencia' in sesion:
-        del sesion['informe_transferencia']
+    nuevos = list(dict.fromkeys(int(c) for c in codigos))
+    if sesion.get(SELECCION_INFORME) != nuevos:
+        sesion[SELECCION_INFORME] = nuevos
+
+
+def clases_comparador(fondos, moneda, leer_clases):
+    partes = []
+    for f in fondos.to_dict('records'):
+        cl = filtrar_moneda(leer_clases(int(f['codigo_cnv'])), moneda).copy()
+        cl['codigo_cnv'] = int(f['codigo_cnv'])
+        cl['etiqueta'] = f['nombre'] + ' — ' + cl['nombre'].str.split(' - ').str[-1]
+        partes.append(cl)
+    return pd.concat(partes, ignore_index=True)
 
 
 def historia_comparador(fondos, clases, leer_serie, cargar_puntual):
     """Fuentes inyectables; un fondo sin historia no interrumpe a los demás."""
     partes, avisos = [], []
+    seguidas = clases.loc[clases.codigo_cnv.isin(fondos.loc[fondos.seguido, 'codigo_cnv']), 'codigo_cafci']
+    lote = leer_serie(seguidas) if len(seguidas) else pd.DataFrame(columns=['codigo_cafci'])
     for fondo in fondos.to_dict("records"):
         codigos = clases.loc[clases.codigo_cnv.eq(fondo["codigo_cnv"]), "codigo_cafci"]
         if codigos.empty:
             continue
         if fondo["seguido"]:
-            historia = leer_serie(codigos)
+            historia = lote
         else:
             resultado = cargar_puntual(fondo)
             historia = resultado["serie"]

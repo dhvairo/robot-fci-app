@@ -702,9 +702,24 @@ def clases_preferidas(df_clases):
 
 
 def serie(codigos_cafci):
-    return consultar("select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima "
-                     "where codigo_cafci = any(%s) order by fecha",
-                     (list(codigos_cafci),))
+    """Una lectura por lote de faltantes; cada clase se reutiliza en la sesión."""
+    import rapidez
+    codigos = list(dict.fromkeys(int(c) for c in codigos_cafci))
+    memoria = rapidez.memorizar('historia_por_clase', dict)
+    faltantes = [c for c in codigos if c not in memoria]
+    if faltantes:
+        lote = consultar("select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima "
+                         "where codigo_cafci = any(%s) order by fecha", (faltantes,))
+        grupos = dict(tuple(lote.groupby('codigo_cafci')))
+        for codigo in faltantes:
+            memoria[codigo] = grupos.get(codigo, lote.iloc[:0])
+        for codigo in list(memoria):
+            if len(memoria) <= 120:
+                break
+            if codigo not in codigos:
+                del memoria[codigo]
+    return pd.concat([memoria[c] for c in codigos], ignore_index=True) if codigos else pd.DataFrame(
+        columns=['codigo_cafci', 'fecha', 'cuotaparte', 'patrimonio'])
 
 
 def rendimientos_ultimos(codigos_cafci):

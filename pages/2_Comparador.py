@@ -21,6 +21,8 @@ st.set_page_config(page_title="Comparador", page_icon="📈", layout="wide")
 acceso.requerir()
 inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Comparador")
+if not st.session_state.get('comparador_llevar', st.session_state.get('comparador_llevar_memoria', False)):
+    st.session_state.pop(calculos.SELECCION_INFORME, None)
 
 st.button("Restablecer", on_click=filtros.restablecer_comparador, args=(st.session_state,))
 
@@ -34,21 +36,17 @@ if base.empty:
     st.stop()
 nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
 with st.expander("Fondos", expanded=False):
-    elegidos = filtros.lista_fondos("Fondos", nombres, "comparador_fondos")
+    elegidos = filtros.lista_fondos("Fondos", nombres, "comparador_fondos", vacio_todos=False)
 if not elegidos:
     with st.expander("Clase", expanded=False):
         st.info("Seleccioná fondos para ver sus clases.")
-    st.info("Elegí al menos un fondo o marcá Todos.")
+    st.info("Elegí al menos un fondo.")
     st.stop()
 fondos = base[base.codigo_cnv.isin(elegidos)]
-clases = []
-for f in fondos.to_dict("records"):
-    cl = datos.clases_de_fondo(int(f["codigo_cnv"])).copy()
-    cl = calculos.filtrar_moneda(cl, st.session_state["comparador_filtro_1"]).copy()
-    cl["codigo_cnv"] = int(f["codigo_cnv"])
-    cl["etiqueta"] = f["nombre"] + " — " + cl["nombre"].str.split(" - ").str[-1]
-    clases.append(cl)
-clases = pd.concat(clases, ignore_index=True)
+monedas = tuple(st.session_state['comparador_filtro_1'])
+clases = rapidez.memorizar('comparador_catalogo_clases',
+    lambda: calculos.clases_comparador(fondos, list(monedas), datos.clases_de_fondo),
+    tuple(fondos.codigo_cnv), monedas)
 if clases.empty:
     st.info("No hay clases disponibles para estos fondos y moneda.")
     st.stop()
@@ -62,6 +60,9 @@ with st.expander("Clase", expanded=False):
 if not elegidas:
     st.info("Elegí al menos una clase.")
     st.stop()
+if len(elegidas) > 30:
+    st.warning("Se muestran las primeras 30 clases como máximo. Afiná la selección para elegir otras.")
+    elegidas = elegidas[:30]
 sel = clases[clases.codigo_cafci.isin(elegidas)]
 fondos = fondos[fondos.codigo_cnv.isin(sel.codigo_cnv)]
 modo = st.radio("Qué comparar", ["R", "P", "R y P"], horizontal=True,
@@ -72,6 +73,8 @@ llevar = st.toggle("Llevar estos fondos al Informe descriptivo", key="comparador
 st.session_state['comparador_llevar_memoria'] = llevar
 if llevar:
     calculos.enviar_al_informe(st.session_state, fondos.codigo_cnv)
+else:
+    st.session_state.pop(calculos.SELECCION_INFORME, None)
 
 cache = st.session_state.setdefault("consulta_puntual", {})
 def cargar(fondo):
@@ -91,14 +94,24 @@ if (~fondos.seguido).any():
 graficos = []
 serie_pdf = ser
 controles = calculos.controles_series(st.session_state, sel)
+opciones_series = {c['codigo']: c['nombre'] for c in controles}
+anteriores = st.session_state.get('comparador_series_elegidas')
+if not isinstance(anteriores, list):
+    st.session_state.pop('comparador_series_elegidas', None)
+    anteriores = None
+else:
+    nuevas = set(opciones_series) - set(st.session_state.get('comparador_series_disponibles', []))
+    st.session_state['comparador_series_elegidas'] = [c for c in opciones_series if c in anteriores or c in nuevas]
+series_elegidas = st.multiselect('Series en el gráfico', list(opciones_series),
+    default=list(opciones_series) if anteriores is None else None,
+    format_func=opciones_series.get, key='comparador_series_elegidas')
+st.session_state['comparador_series_disponibles'] = list(opciones_series)
+for c in controles:
+    c['visible'] = c['codigo'] in series_elegidas
+    st.session_state['comparador_series'][c['codigo']]['visible'] = c['visible']
 visibles = sel[sel.codigo_cafci.isin([c["codigo"] for c in controles if c["visible"]])]
 serie_pdf = ser[ser.codigo_cafci.isin(visibles.codigo_cafci)] if not ser.empty else ser
 mostrar = visibles[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "moneda": "Moneda"})
-st.caption("Series del gráfico: tocá un botón para ocultar o mostrar su línea.")
-for control in controles:
-    st.button(control["nombre"], key=f"comparador_serie_{control['codigo']}",
-              help="Encendida" if control["visible"] else "Apagada",
-              on_click=calculos.alternar_serie, args=(st.session_state, control["codigo"]))
 if ser.empty:
     notas.append("Sin historia disponible para esta selección.")
 else:
@@ -124,8 +137,10 @@ else:
         bool(fondos.seguido.all()))
     serie_pdf = serie_pdf[serie_pdf.codigo_cafci.isin(visibles.codigo_cafci)]
     mostrar = mostrar.merge(resumen, on=["Clase", "Moneda"], how="left")
-    for fig in graficos:
-        st.plotly_chart(formato.plotly_es(fig, fechas_x=True), width="stretch")
+    for indice, fig in enumerate(graficos):
+        rapidez.grafico_memorizado(f'comparador_grafico_{indice}', formato.plotly_es(fig, fechas_x=True),
+            *seleccion, str(desde), str(hasta), modo,
+            tuple((c['codigo'], c['visible']) for c in controles), bool(fondos.seguido.all()))
     sin_cobertura = calculos.clases_sin_cobertura(serie_pdf, desde, hasta)
     sin_periodo = set(visibles.etiqueta) - set(serie_pdf.etiqueta)
     if sin_periodo:
