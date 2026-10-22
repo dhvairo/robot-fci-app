@@ -128,6 +128,7 @@ def precalentar_comunes():
         if not catalogo.empty:
             datos._fuente_carteras_comun()
             datos._clases_gestion_comunes()
+            datos._clases_vigentes_comunes()
         datos.filas_a_revisar(120)
     return _tarea_comun('CATALOGO', cargar)
 

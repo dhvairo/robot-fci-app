@@ -410,6 +410,9 @@ def ingresar(correo, clave):
                                 "vence": time.time() + sesion.get("expires_in", 3600),
                                 "persona": persona}
     st.session_state.pop("acceso_ok", None)
+    # Auth acaba de validar este usuario: la primera pantalla no repite la llamada (vale 5 minutos).
+    st.session_state["auth"]["_validacion"] = ((sesion["access_token"], dict(persona), roles_activos()),
+                                               dict(persona), time.monotonic())
     return persona
 
 

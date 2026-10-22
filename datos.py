@@ -64,15 +64,48 @@ def _url():
     return v or os.environ.get("APP_DB_URL")
 
 
+TOPE_LECTURA_DIA = 150_000_000
+_lectura = {'dia': None, 'bytes': 0}
+_lock_lectura = RLock()
+
+
+class TopeLectura(Exception):
+    """El proceso ya leyó de Supabase lo presupuestado para hoy."""
+
+
+def mb_leidos_hoy():
+    """MB (estimados por el tamaño de los resultados) que este proceso leyó hoy de Supabase."""
+    with _lock_lectura:
+        return _lectura['bytes'] / 1_000_000 if _lectura['dia'] == time.strftime('%Y-%m-%d') else 0.0
+
+
+def _presupuesto_lectura(nuevos=0):
+    """Suma `nuevos` bytes al día; con el tope superado no deja pasar otra lectura de la base."""
+    hoy = time.strftime('%Y-%m-%d')
+    with _lock_lectura:
+        if _lectura['dia'] != hoy:
+            _lectura.update(dia=hoy, bytes=0)
+        if _lectura['bytes'] >= TOPE_LECTURA_DIA:
+            raise TopeLectura()
+        _lectura['bytes'] += nuevos
+        total = _lectura['bytes']
+    if nuevos:
+        import logging
+        logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO LECTURA %.3f_MB día %.3f_MB',
+                                            nuevos / 1_000_000, total / 1_000_000)
+
+
 def _ejecutar(sql, params=None):
     url = _url()
     if not url:
         st.error("Falta APP_DB_URL (archivo .env o secretos de la app).")
         st.stop()
+    _presupuesto_lectura()
     with conexion_compartida(url, connect_timeout=20) as conn, calculos.medir_seguimiento('CONSULTA_COMUN'):
         cur = conn.execute(sql, params)
         columnas = [c.name for c in cur.description]
         df = pd.DataFrame(cur.fetchall(), columns=columnas)
+    _presupuesto_lectura(int(df.memory_usage(index=False, deep=True).sum()))
     for c in df.columns:
         if df[c].map(lambda x: isinstance(x, Decimal)).any():
             df[c] = df[c].astype(float)
@@ -623,7 +656,13 @@ def consultar(sql, params=None):
     inicio = time.perf_counter()
     fallo = []
     # psycopg necesita listas para los parámetros ANY; mantenerlas en SQL.
-    resultado = _consultar_comun(sql, canonico(params), fallo)
+    try:
+        resultado = _consultar_comun(sql, canonico(params), fallo)
+    except TopeLectura:
+        st.error('Se alcanzó el tope diario de lectura de la base. Los datos ya cargados siguen disponibles; '
+                 'avisá al administrador.')
+        st.stop()
+        raise
     acceso.registrar_cache('COMUN_' + hashlib.sha256(sql.encode('utf-8')).hexdigest()[:8],
                           not fallo, (time.perf_counter() - inicio) * 1000)
     return resultado
@@ -687,9 +726,15 @@ def _clases_gestion_comunes():
         "where c.vigente_hasta is null order by f.nombre, c.nombre")
 
 
+def _clases_vigentes_comunes():
+    """Una sola lectura común de todas las clases vigentes; el Comparador no consulta fondo por fondo."""
+    return consultar("select codigo_cnv, codigo_cafci, nombre, moneda from clases "
+                     "where vigente_hasta is null order by nombre")
+
+
 def clases_de_fondo(codigo_cnv):
-    return consultar("select codigo_cafci, nombre, moneda from clases "
-                     "where codigo_cnv = %s and vigente_hasta is null order by nombre", (codigo_cnv,))
+    todas = _clases_vigentes_comunes()
+    return todas[todas['codigo_cnv'].astype(str) == str(codigo_cnv)][['codigo_cafci', 'nombre', 'moneda']].reset_index(drop=True)
 
 
 def foto_de_fondo(codigo_cnv):
