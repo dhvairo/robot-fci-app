@@ -469,8 +469,8 @@ def _vista_carteras_sin_cache():
     return resultado
 
 
-_VISTAS_ORGANIZACION = {}
-_CERROJO_VISTAS = Lock()
+_VISTAS_ORGANIZACION = globals().get('_VISTAS_ORGANIZACION', {})
+_CERROJO_VISTAS = globals().get('_CERROJO_VISTAS', Lock())
 _COLUMNAS_HUELLA = ('codigo_cnv', 'fecha_cartera', 'orden', 'instrumento', 'pct_pn', 'rubro_cnv',
                     'categoria_resumen', 'categoria_detallada', 'moneda', 'indexacion', 'sin_clasificar')
 
@@ -895,6 +895,10 @@ def _fondos_ficha_comunes(incluir_no_seguidos=False):
     """Cabecera y primera categoría de los seguidos; incluir_no_seguidos habilita todo el catálogo.
 
     patrimonio_neto = suma del patrimonio de sus clases con dato normal (sin marca de estado), en la moneda del fondo."""
+    if not incluir_no_seguidos:
+        # La cabecera completa ya se precalienta: no descargar otra vez los seguidos.
+        todos = _fondos_ficha_comunes(True)
+        return todos[todos['seguido']].copy()
     return consultar(
         "select f.codigo_cnv, f.nombre, f.moneda, f.estado, f.id_ficha_web, f.seguido, "
         "case when f.seguido then coalesce(nullif(f.rubro, ''), f.tipo_fondo) "

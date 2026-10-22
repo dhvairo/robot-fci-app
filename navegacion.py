@@ -35,6 +35,10 @@ def mostrar(inicio):
     import calculos
 
     try:
+        if st.session_state.get('auth'):
+            persona = acceso._validar_sesion()
+            if not persona['cambio_obligatorio']:
+                acceso.preparar_ingreso(persona)
         activa = acceso.preferencias_activas()
         inicial = 'Inicio'
         if activa and acceso.usuario():

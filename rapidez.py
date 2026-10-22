@@ -150,7 +150,8 @@ def precalentar_comunes():
         return en_paralelo((lambda: datos._fondos_ficha_comunes(True),
                             datos._fuente_carteras_comun, datos._clases_gestion_comunes,
                             datos._clases_vigentes_comunes, lambda: datos.filas_a_revisar(120),
-                            datos._cabeceras_carteras_comunes))
+                            datos._cabeceras_carteras_comunes, datos._catalogo_fondos_comun,
+                            lambda: datos._fondos_ficha_comunes(False)))
     return _tarea_comun('CATALOGO', cargar)
 
 
@@ -225,6 +226,14 @@ def _imports_comunes():
     import plotly.express  # noqa: F401
     import consulta_puntual  # noqa: F401
     import pandas.io.formats.style  # noqa: F401; primer Styler, sin datos ni UI.
+    # Primer enqueue: inspect.getmodule recorre todos los módulos en Windows.
+    # Calentar su índice y Arrow fuera de la primera pantalla, sin dibujar.
+    import inspect
+    import pandas as pd
+    from streamlit import dataframe_util, string_util
+    dataframe_util.convert_pandas_df_to_arrow_bytes(pd.DataFrame({'dato': [0]}))
+    string_util.validate_icon_or_emoji('📈')  # Cargar el catálogo de emojis del menú.
+    inspect.getmodule(None, '<precalentado>')  # Indexar módulos, incluso sin frames de la app.
 
 
 def _ciclo_servidor():

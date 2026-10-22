@@ -697,6 +697,32 @@ def _pantalla_usuarios():
             st.error(str(error))
 
 
+def preparar_ingreso(persona):
+    """Marca y preferencias en paralelo; solo el hilo de sesión publica resultados.
+
+    La marca cruda no accede a session_state ni se guarda en recursos globales.
+    La caché privada conserva su identidad, vencimiento e invalidación habituales.
+    """
+    import datos
+    import calculos
+    import rapidez
+
+    def cargar():
+        tarea = rapidez._lanzar('MARCA', lambda: datos.organizacion(persona), publica=True)
+        try:
+            if preferencias_activas():
+                calculos.preferencias_usuario(st.session_state)
+        finally:
+            # También recoger la tarea si las preferencias fallan.
+            try:
+                resultado = tarea.result(timeout=rapidez.TIEMPO_ESPERA)
+            except (RuntimeError, TimeoutError):
+                raise ErrorAcceso('No se pudo cargar la organización y sus preferencias.') from None
+        return resultado
+
+    st.session_state['marca'] = lectura_privada('marca', persona, cargar)
+
+
 def requerir(accion='consultar'):
     """Único control de todas las pantallas; exige cambiar la clave antes de mostrar datos."""
     import marca
@@ -746,8 +772,8 @@ def requerir(accion='consultar'):
                 st.stop()
         try:
             import datos
-            st.session_state["marca"] = datos.organizacion(persona)
-        except datos.ErrorPreferencias:
+            preparar_ingreso(persona)
+        except (datos.ErrorPreferencias, ErrorAcceso):
             st.error("No se pudo cargar la organización y sus preferencias.")
             st.stop()
         marca.mostrar()
