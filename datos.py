@@ -1,4 +1,4 @@
-"""Acceso a la base: comunes compartidos por seis horas; privados solo en sesión."""
+"""Acceso a la base: comunes por versión; privados solo en sesión."""
 import os
 import json
 import hashlib
@@ -6,7 +6,7 @@ import time
 from concurrent.futures import Future
 from contextlib import contextmanager
 from threading import Lock, RLock
-from decimal import Decimal
+from queue import Queue
 from pathlib import Path
 
 import pandas as pd
@@ -65,6 +65,35 @@ def _url():
     return v or os.environ.get("APP_DB_URL")
 
 
+@st.cache_resource(show_spinner=False)
+def _pool_comun(url):
+    """Seis conexiones públicas como máximo, sin GUC ni identidad de sesión."""
+    pool = Queue()
+    for _ in range(6):
+        pool.put(_ConexionCompartida())
+    return pool
+
+
+@contextmanager
+def _conexion_comun(url):
+    with calculos.medir_seguimiento('COMUN_POOL'):
+        pool = _pool_comun(url)
+        recurso = pool.get(timeout=60)
+    try:
+        if recurso.conn is None or recurso.conn.closed or recurso.conn.broken:
+            with calculos.medir_seguimiento('CONEXION_COMUN'):
+                recurso.conn = psycopg.connect(url, connect_timeout=20, autocommit=True)
+        try:
+            with recurso.conn.transaction():
+                yield recurso.conn
+        except BaseException:
+            recurso.conn.close()
+            recurso.conn = None
+            raise
+    finally:
+        pool.put(recurso)
+
+
 TOPE_LECTURA_DIA = 150_000_000
 _lectura = {'dia': None, 'bytes': 0}
 _lock_lectura = RLock()
@@ -102,13 +131,18 @@ def _ejecutar(sql, params=None):
         st.error("Falta APP_DB_URL (archivo .env o secretos de la app).")
         st.stop()
     _presupuesto_lectura()
-    with conexion_compartida(url, connect_timeout=20) as conn, calculos.medir_seguimiento('CONSULTA_COMUN'):
+    with _conexion_comun(url) as conn, calculos.medir_seguimiento('CONSULTA_COMUN'):
         cur = conn.execute(sql, params)
         columnas = [c.name for c in cur.description]
-        df = pd.DataFrame(cur.fetchall(), columns=columnas)
-    _presupuesto_lectura(int(df.memory_usage(index=False, deep=True).sum()))
-    for c in df.columns:
-        if df[c].map(lambda x: isinstance(x, Decimal)).any():
+        numericas = [c.name for c in cur.description if getattr(c, 'type_code', None) == 1700]
+        filas = cur.fetchall()
+    with calculos.medir_seguimiento('COMUN_DATAFRAME'):
+        df = pd.DataFrame.from_records(filas, columns=columnas)
+    with calculos.medir_seguimiento('COMUN_BYTES'):
+        _presupuesto_lectura(int(df.memory_usage(index=False, deep=True).sum()))
+    with calculos.medir_seguimiento('COMUN_TIPOS'):
+        # PostgreSQL ya informa NUMERIC: evitar un callback Python por celda/columna.
+        for c in numericas:
             df[c] = df[c].astype(float)
     return df
 
@@ -413,7 +447,8 @@ def _componer_con_sello(filas_fuente, contexto_validado, con_sello):
 def vista_carteras():
     import acceso
     contexto = _contexto_clasificacion(acceso.usuario())
-    return acceso.lectura_privada('vista_carteras', contexto, _vista_carteras_sin_cache, copiar=False)
+    return acceso.lectura_privada(('vista_carteras', version_comun()), contexto,
+                                 _vista_carteras_sin_cache, copiar=False)
 
 
 def _vista_carteras_sin_cache():
@@ -545,8 +580,6 @@ class VistaCompartida(dict):
 
 def fondos_ficha(incluir_no_seguidos=False):
     import rapidez
-    if incluir_no_seguidos and not rapidez.comunes_listos():
-        st.stop()
     try:
         privada = calculos.lectura_seguimiento_activa()
     except calculos.ErrorSeguimiento:
@@ -554,7 +587,8 @@ def fondos_ficha(incluir_no_seguidos=False):
         st.stop()
         raise
     def componer():
-        comunes = _fondos_ficha_comunes(True if privada else incluir_no_seguidos)
+        incluir = True if privada else incluir_no_seguidos
+        comunes = rapidez.leer_comun('FONDOS_' + str(bool(incluir)), lambda: _fondos_ficha_comunes(incluir))
         vista = vista_carteras()
         salida = calculos.catalogo_efectivo(comunes, vista)
         salida = _seguimiento_para_consulta(salida)
@@ -583,10 +617,7 @@ def resumen_carteras(vista=None):
     comunes = _resumen_carteras_comun() if vista['estado'] != 'habilitado' else None
     if comunes is not None:
         return comunes
-    cabeceras = consultar(
-        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio from carteras_fechas x "
-        "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
-        "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
+    cabeceras = _cabeceras_carteras_comunes()
     # Resumen compartido junto con la vista de su organización; se rehace si cambian las cabeceras comunes.
     try:
         huella = int(pd.util.hash_pandas_object(cabeceras, index=False).sum())
@@ -750,10 +781,70 @@ def resolver_novedad_ficha(fila, accion):
                           fila['revision'], fila['version_fuente'])
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
-def _consultar_comun(sql, params, _fallo):
+# recarga.al_dia puede releer el módulo: conservar el sello junto a los recursos sin TTL.
+_VERSION_COMUN = globals().get('_VERSION_COMUN', 0)
+_VERSION_CARGA = globals().get('_VERSION_CARGA', 0)
+_CONSULTAS_COMUNES = globals().get('_CONSULTAS_COMUNES', {})
+_CERROJO_COMUNES = globals().get('_CERROJO_COMUNES', RLock())
+_CERROJO_REFRESCO = globals().get('_CERROJO_REFRESCO', Lock())
+_SELLO_COMUN = globals().get('_SELLO_COMUN')
+
+
+def version_comun():
+    return _VERSION_COMUN
+
+
+@st.cache_resource(max_entries=512, show_spinner=False)
+def _consultar_comun(sql, params, _fallo, version=0):
+    """Solo resultados SQL públicos, sin attrs privados ni pickle en cada lectura."""
     _fallo.append(True)
     return _ejecutar(sql, params)
+
+
+def sello_comun():
+    """Una fila de metadatos públicos; nunca lee usuarios, pedidos ni reglas privadas."""
+    return tuple(_ejecutar(
+        "select (select max(recibido_en) from archivos_procesados) as archivos, "
+        "(select max(actualizado_en) from foto_clases) as foto, "
+        "(select md5(string_agg(f::text, '|' order by codigo_cnv)) from fondos f) as catalogo, "
+        "(select md5(string_agg(s::text, '|' order by tipo, codigo)) from sociedades s) as sociedades"
+    ).iloc[0])
+
+
+def refrescar_comunes():
+    """Trabajo de fondo: sello igual no descarga; cambio publica todo junto, conservando lo anterior si falla."""
+    global _VERSION_COMUN, _VERSION_CARGA, _SELLO_COMUN
+    import rapidez
+    if not _CERROJO_REFRESCO.acquire(blocking=False):
+        return False
+    try:
+        sello = sello_comun()
+        if sello == _SELLO_COMUN:
+            return False
+        if _SELLO_COMUN is None:
+            _SELLO_COMUN = sello
+            return False
+        with _CERROJO_COMUNES:
+            consultas = list(_CONSULTAS_COMUNES.values())
+            # Cada intento tiene clave propia: no reciclar un resultado parcial de un refresco fallido.
+            _VERSION_CARGA += 1
+            version = _VERSION_CARGA
+        rapidez.en_paralelo([lambda sql=sql, params=params:
+            _consultar_comun(sql, params, [], version) for sql, params in consultas])
+        # Si entró una consulta nueva mientras refrescábamos, se carga al primer uso de la versión nueva.
+        with _CERROJO_COMUNES:
+            _VERSION_COMUN, _SELLO_COMUN = version, sello
+        return True
+    finally:
+        _CERROJO_REFRESCO.release()
+
+
+def _limpiar_comunes():
+    global _VERSION_COMUN, _VERSION_CARGA, _SELLO_COMUN
+    with _CERROJO_COMUNES:
+        _CONSULTAS_COMUNES.clear()
+        _VERSION_COMUN, _VERSION_CARGA, _SELLO_COMUN = 0, 0, None
+        _consultar_comun.clear()
 
 
 def consultar(sql, params=None):
@@ -773,9 +864,15 @@ def consultar(sql, params=None):
         return valor
     inicio = time.perf_counter()
     fallo = []
+    params = canonico(params)
+    with _CERROJO_COMUNES:
+        _CONSULTAS_COMUNES[(sql, repr(params))] = (sql, params)
+        version = _VERSION_COMUN
     # psycopg necesita listas para los parámetros ANY; mantenerlas en SQL.
     try:
-        resultado = _consultar_comun(sql, canonico(params), fallo)
+        resultado = _consultar_comun(sql, params, fallo, version)
+        with calculos.medir_seguimiento('COMUN_COPIA'):
+            resultado = resultado.copy(deep=True)
     except TopeLectura:
         st.error('Se alcanzó el tope diario de lectura de la base. Los datos ya cargados siguen disponibles; '
                  'avisá al administrador.')
@@ -786,7 +883,7 @@ def consultar(sql, params=None):
     return resultado
 
 
-consultar.clear = _consultar_comun.clear
+consultar.clear = _limpiar_comunes
 
 
 def fondos_seguidos():
@@ -817,13 +914,18 @@ def _fondos_ficha_comunes(incluir_no_seguidos=False):
         + ("" if incluir_no_seguidos else "where f.seguido ") + "order by f.nombre")
 
 
-def _resumen_carteras_comun():
-    """Para el Resumen masivo: de la última cartera de cada fondo seguido, su fecha y patrimonio, la suma del % del
-    PN por categoría resumen y sus 3 mayores tenencias. Devuelve (carteras, sumas, tenencias)."""
-    carteras = consultar(
+def _cabeceras_carteras_comunes():
+    """Misma lectura para el resumen legado y la vista efectiva U110."""
+    return consultar(
         "select x.codigo_cnv, x.fecha_cartera, x.patrimonio from carteras_fechas x "
         "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
         "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
+
+
+def _resumen_carteras_comun():
+    """Para el Resumen masivo: de la última cartera de cada fondo seguido, su fecha y patrimonio, la suma del % del
+    PN por categoría resumen y sus 3 mayores tenencias. Devuelve (carteras, sumas, tenencias)."""
+    carteras = _cabeceras_carteras_comunes()
     sumas = consultar("select c.codigo_cnv, c.categoria_resumen, sum(c.pct_pn) as pct "
                       "from carteras_ultima c join fondos f using (codigo_cnv) where f.seguido "
                       "group by c.codigo_cnv, c.categoria_resumen")
@@ -948,7 +1050,9 @@ def historia_por_clase():
 
 
 def resumen_base():
-    r = consultar("select (select count(*) from fondos) as fondos, "
+    import rapidez
+    def cabecera():
+        return consultar("select (select count(*) from fondos) as fondos, "
                   "(select count(*) from fondos where seguido) as seguidos, "
                   "(select count(*) from clases where vigente_hasta is null) as clases, "
                   "(select count(*) from valores_diarios_ultima) as valores, "
@@ -957,8 +1061,9 @@ def resumen_base():
                   "(select max(fecha_cartera) from carteras_fechas) as ultima_cartera, "
                   "(select count(*) from carteras where sin_clasificar) as sin_clasificar, "
                   "(select count(*) from hechos_relevantes) as hechos").iloc[0].copy()
+    r, historia = rapidez.en_paralelo((cabecera, historia_por_clase))
     # Primera fecha con cuotaparte entre las clases activas (las suspendidas traen fechas de años atrás).
-    r["desde"] = calculos.historia_desde(historia_por_clase())
+    r["desde"] = calculos.historia_desde(historia)
     return r
 
 

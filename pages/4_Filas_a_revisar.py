@@ -19,8 +19,7 @@ st.markdown(
     "o distribuciones de utilidades, que los rendimientos no consideran. No son necesariamente errores del robot.")
 
 dias = st.radio("Mostrar los últimos", [30, 60, 120, 365], index=2, horizontal=True, format_func=lambda d: f"{d} días")
-rapidez.comunes_listos()
-r = datos.filas_a_revisar(dias)
+r = rapidez.filas_iniciales(dias)
 if r.empty:
     st.success(f"No hay filas a revisar en los últimos {dias} días.")
     st.stop()

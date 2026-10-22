@@ -6,13 +6,29 @@ escribir (acceso.invalidar_lecturas_privadas) o a los 5 minutos. Las pantallas s
 import streamlit as st
 
 
-@st.cache_resource(ttl=600, max_entries=2, show_spinner=False)
+@st.cache_resource(max_entries=32, show_spinner=False)
+def _recurso_tarea(clave, version, _cargar):
+    """Cargas públicas por versión; nunca composiciones privadas ni derivados de sesión."""
+    return _lanzar(clave, _cargar, publica=True)
+
+
 def _tarea_comun(clave, _cargar):
-    """Solo dos cargas públicas; nunca composiciones privadas ni derivados de sesión."""
-    return _lanzar(clave, _cargar)
+    import datos
+    return _recurso_tarea(clave, datos.version_comun(), _cargar)
 
 
-def _lanzar(clave, cargar):
+_tarea_comun.clear = _recurso_tarea.clear
+
+
+def en_paralelo(cargas):
+    """No transmite contexto de sesión a los seis trabajadores de datos públicos."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix='lectura-comun') as pool:
+        tareas = [pool.submit(cargar) for cargar in cargas]
+        return tuple(tarea.result(timeout=TIEMPO_ESPERA) for tarea in tareas)
+
+
+def _lanzar(clave, cargar, publica=False):
     """El trabajador entrega un resultado: nunca escribe estado de sesión ni dibuja."""
     from concurrent.futures import Future
     from threading import Thread
@@ -35,7 +51,7 @@ def _lanzar(clave, cargar):
                 del hilo.streamlit_script_run_ctx
 
     hilo = Thread(target=ejecutar, name='carga-comun-' + clave, daemon=True)
-    ctx = get_script_run_ctx(suppress_warning=True)
+    ctx = None if publica else get_script_run_ctx(suppress_warning=True)
     if ctx is not None:
         add_script_run_ctx(hilo, ctx)
     hilo.start()
@@ -73,16 +89,15 @@ def precalentar_sesion(persona):
     import time
     import datos
     contexto = datos._contexto_clasificacion(persona)
+    contexto = dict(contexto, _version_comun=datos.version_comun())
     identidad = tuple(sorted(dict(persona).items()))
     anterior = st.session_state.get('_arranque_privado')
     if anterior and anterior[:2] == (identidad, contexto) and time.monotonic() - anterior[2] < 300:
         return anterior[3]
-    comun = precalentar_comunes()
+    precalentar_comunes()
     def cargar():
-        comun.result()
-        vista = datos._cargar_vista_carteras(contexto)
-        datos.resumen_carteras(vista)
-        return vista
+        # No esperar catálogo, Gestión, Filas ni imports para tener la clasificación.
+        return datos._cargar_vista_carteras(contexto)
     tarea = _lanzar('CLASIFICACION', cargar)
     st.session_state['_arranque_privado'] = (identidad, contexto, time.monotonic(), tarea)
     return tarea
@@ -95,7 +110,7 @@ def vista_inicial():
     if anterior is None:
         return None  # contratos puros y lectores sin ingreso conservan su camino
     persona = acceso.usuario()
-    contexto = datos._contexto_clasificacion(persona)
+    contexto = dict(datos._contexto_clasificacion(persona), _version_comun=datos.version_comun())
     tarea = precalentar_sesion(persona)
     if contexto != st.session_state['_arranque_privado'][1]:
         return None
@@ -109,27 +124,33 @@ def inicio():
     import datos
     import operacion
     def cargar():
-        return (operacion.obtener(st.secrets), datos.resumen_base(),
-                datos.ultimas_entradas(), datos.estado_robot())
+        return en_paralelo((lambda: operacion.obtener(st.secrets), datos.resumen_base,
+                            datos.ultimas_entradas, datos.estado_robot))
     if not _lista('INICIO', cargar):
         return None
-    return _tarea_comun('INICIO', cargar).result()
+    resultado = _tarea_comun('INICIO', cargar).result()
+    return (_OPERACION_PUBLICA or resultado[0], *resultado[1:])
+
+
+def filas_iniciales(dias):
+    import datos
+    return leer_comun('FILAS_' + str(dias), lambda: datos.filas_a_revisar(dias))
+
+
+def leer_comun(clave, cargar):
+    tarea = _tarea_comun(clave, cargar)
+    _esperar(tarea)
+    return tarea.result()
 
 
 def precalentar_comunes():
     """Las mismas claves SQL que consumen Comparador e Informe; sin historias/PDF."""
     import datos
     def cargar():
-        # Imports que el Comparador hace en su primera apertura; solo CPU, sin E/S.
-        import plotly.express  # noqa: F401
-        import consulta_puntual  # noqa: F401
-        import informe  # noqa: F401
-        catalogo = datos._fondos_ficha_comunes(True)
-        if not catalogo.empty:
-            datos._fuente_carteras_comun()
-            datos._clases_gestion_comunes()
-            datos._clases_vigentes_comunes()
-        datos.filas_a_revisar(120)
+        return en_paralelo((lambda: datos._fondos_ficha_comunes(True),
+                            datos._fuente_carteras_comun, datos._clases_gestion_comunes,
+                            datos._clases_vigentes_comunes, lambda: datos.filas_a_revisar(120),
+                            datos._cabeceras_carteras_comunes))
     return _tarea_comun('CATALOGO', cargar)
 
 
@@ -190,9 +211,70 @@ def memorizar(clave, calcular, *seleccion, contexto=None):
     La identidad sale de la persona ya validada por acceso.requerir() al comienzo de la pantalla, o del contexto
     validado que pase quien llama (datos.fondos_ficha)."""
     import acceso
+    import datos
     persona = contexto if contexto is not None else (acceso.usuario() or {})
     identidad = tuple(sorted((k, str(v)) for k, v in dict(persona).items()))
-    return acceso.memoria_derivada((clave, identidad, seleccion), calcular)
+    return acceso.memoria_derivada((clave, identidad, datos.version_comun(), seleccion), calcular)
+
+
+_OPERACION_PUBLICA = globals().get('_OPERACION_PUBLICA')
+_SERVIDOR_PUBLICO = globals().get('_SERVIDOR_PUBLICO')
+
+
+def _imports_comunes():
+    import plotly.express  # noqa: F401
+    import consulta_puntual  # noqa: F401
+    import pandas.io.formats.style  # noqa: F401; primer Styler, sin datos ni UI.
+
+
+def _ciclo_servidor():
+    global _OPERACION_PUBLICA
+    import datos
+    import operacion
+    datos.refrescar_comunes()
+    catalogo = precalentar_comunes()
+    def inicio_publico():
+        return en_paralelo((lambda: operacion.obtener(st.secrets), datos.resumen_base,
+                            datos.ultimas_entradas, datos.estado_robot))
+    inicio = _tarea_comun('INICIO', inicio_publico)
+    _tarea_comun('IMPORTS', _imports_comunes)  # CPU independiente de los datos; sin historias ni PDF.
+    catalogo.result(timeout=TIEMPO_ESPERA)
+    inicio.result(timeout=TIEMPO_ESPERA)
+    _OPERACION_PUBLICA = operacion.obtener(st.secrets)  # Mantiene el TTL propio de Actions.
+
+
+@st.cache_resource(show_spinner=False)
+def iniciar_servidor():
+    """Primer import, antes de ingresar: solo fuentes comunes; ninguna marca ni identidad privada."""
+    global _SERVIDOR_PUBLICO
+    if _SERVIDOR_PUBLICO is not None and not _SERVIDOR_PUBLICO.done():
+        return _SERVIDOR_PUBLICO  # También después de recargar código: un solo monitor público.
+    from threading import Event
+    def mantener():
+        pausa = Event()
+        while True:
+            try:
+                _ciclo_servidor()
+            except Exception:
+                # No descartar datos previos ni guardar detalles de la conexión.
+                import logging
+                logging.getLogger('seguimiento').warning('SEGUIMIENTO ARRANQUE_PUBLICO pendiente; reintento en 60 s')
+                _tarea_comun.clear()  # Reintentar tareas fallidas; conservar todos los resultados SQL anteriores.
+            pausa.wait(60)  # Solo comprueba sello; no vence ningún dato por reloj.
+    _SERVIDOR_PUBLICO = _lanzar('SERVIDOR', mantener, publica=True)
+    return _SERVIDOR_PUBLICO
+
+
+def _al_importar():
+    import os
+    import datos
+    from streamlit.runtime import exists
+    # Consola/verificaciones no arrancan servicios. No depende de Auth ni session_state.
+    if os.environ.get('ROBOT_FCI_SIN_RED') != '1' and exists() and datos._url():
+        iniciar_servidor()
+
+
+_al_importar()
 
 
 def pdf_a_pedido(clave, firma, armar, archivo, etiqueta, tipo='secondary', memorizado=True):
