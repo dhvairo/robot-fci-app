@@ -35,9 +35,12 @@ def _estado_rerun():
 
 
 def lectura_privada(clave, contexto, leer, copiar=True):
-    """Copia de sesión por 5 minutos, después de validar Auth; jamás caché global.
+    """Copia de sesión por 5 minutos, después de validar Auth; no hay caché global de datos privados.
 
-    copiar=False entrega el objeto guardado (solo lectura) para no copiar estructuras grandes en cada clic."""
+    Única excepción (U110): la vista de carteras se comparte por organización en datos._cargar_vista_carteras
+    (llave organización/dueño + sello de versión; no depende de la persona).
+    copiar=False entrega y guarda el objeto tal cual (solo lectura): no se copian estructuras grandes en cada
+    sesión ni en cada clic."""
     from copy import deepcopy
     if _estado_rerun() is None:
         return leer()
@@ -54,7 +57,7 @@ def lectura_privada(clave, contexto, leer, copiar=True):
         resultado = leer()  # No guardar fallos ni operaciones sin commit.
         if len(cache) >= 12:
             cache.clear()
-        cache[llave] = (ahora, deepcopy(resultado))
+        cache[llave] = (ahora, deepcopy(resultado) if copiar else resultado)
     resultado = deepcopy(cache[llave][1]) if copiar else cache[llave][1]
     tipo = clave[0] if isinstance(clave, tuple) else clave
     nombre = {'vista_carteras': 'CLASIFICACION', 'clasificaciones': 'CLASIFICACION',

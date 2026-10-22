@@ -3,8 +3,9 @@ import os
 import json
 import hashlib
 import time
+from concurrent.futures import Future
 from contextlib import contextmanager
-from threading import RLock
+from threading import Lock, RLock
 from decimal import Decimal
 from pathlib import Path
 
@@ -364,6 +365,23 @@ def componer_carteras_organizacion(filas_fuente, *, contexto_validado=None):
     Recibe las carteras comunes ya cargadas (listas de dicts), no agregados ni
     organización/dueño del navegador. Solo lee registro y adaptador U26.
     """
+    return _componer_con_sello(filas_fuente, contexto_validado, False)[0]
+
+
+# Sello liviano de lo privado y de la identidad, bajo la misma RLS del contexto: si no cambia, la vista guardada
+# sigue vigente y no se baja el JSON grande de clasificacion_leer.
+SELLO_CLASIFICACION_SQL = (
+    "select jsonb_build_array("
+    "(select jsonb_build_array(count(*), coalesce(sum(version), 0), max(editado)) "
+    "from public.clasificaciones_organizacion), "
+    "(select jsonb_build_array(count(*), max(editado)) from public.decisiones_fuente_organizacion), "
+    "(select jsonb_build_array(count(*), coalesce(sum(version_fuente), 0), count(*) filter (where ambiguo)) "
+    "from public.instrumentos_cartera), "
+    "(select jsonb_build_array(count(*), max(recibido)) from public.clasificacion_fuente_versiones))")
+
+
+def _componer_con_sello(filas_fuente, contexto_validado, con_sello):
+    """Devuelve (vista, sello); el sello se lee en la misma transacción que los datos."""
     import acceso
     from psycopg.types.json import Jsonb
 
@@ -382,10 +400,14 @@ def componer_carteras_organizacion(filas_fuente, *, contexto_validado=None):
             'select id from public.instrumentos_cartera '
             'where clave_componentes = any(%s::jsonb[])',
             ([Jsonb(list(c)) for c in sorted(claves, key=str)],)).fetchall()]
+        sello = conn.execute(SELLO_CLASIFICACION_SQL).fetchone()[0] if con_sello else None
         snapshot = _leer_clasificaciones(conn, ids, contexto)
-        return calculos.componer_carteras(filas_fuente, snapshot, contexto)
+        return calculos.componer_carteras(filas_fuente, snapshot, contexto), sello
 
-    return _clasificacion_transaccion(contexto, leer, solo_lectura=True)
+    resultado = _clasificacion_transaccion(contexto, leer, solo_lectura=True)
+    if isinstance(resultado, dict):  # tabla ausente: estado «deshabilitado», sin sello
+        return resultado, None
+    return resultado
 
 
 def vista_carteras():
@@ -395,10 +417,10 @@ def vista_carteras():
 
 
 def _vista_carteras_sin_cache():
-    """Carga común compartida; composición privada de sesión por hasta 5 minutos.
+    """Carga común compartida; composición compartida por organización (ver _cargar_vista_carteras).
 
-    Solo consultar tiene caché global. La vista se pasa entre consumidores de una
-    pantalla para que filtros, tablas y PDF usen exactamente el mismo snapshot.
+    La vista se pasa entre consumidores de una pantalla para que filtros, tablas y PDF
+    usen exactamente el mismo snapshot.
     """
     import rapidez
     resultado = rapidez.vista_inicial()
@@ -412,13 +434,94 @@ def _vista_carteras_sin_cache():
     return resultado
 
 
+_VISTAS_ORGANIZACION = {}
+_CERROJO_VISTAS = Lock()
+_COLUMNAS_HUELLA = ('codigo_cnv', 'fecha_cartera', 'orden', 'instrumento', 'pct_pn', 'rubro_cnv',
+                    'categoria_resumen', 'categoria_detallada', 'moneda', 'indexacion', 'sin_clasificar')
+
+
+def _huella_comun(fuente):
+    """Versión de los datos comunes ya cargados; None si no se puede huellar (no se comparte)."""
+    try:
+        columnas = [c for c in _COLUMNAS_HUELLA if c in fuente.columns]
+        return (len(fuente), tuple(columnas),
+                int(pd.util.hash_pandas_object(fuente[columnas], index=False).sum()))
+    except Exception:
+        return None
+
+
+def _sello_privado(contexto):
+    """Una consulta liviana bajo la misma RLS; None si no se pudo (entonces no se comparte)."""
+    try:
+        resultado = _clasificacion_transaccion(
+            contexto, lambda conn: conn.execute(SELLO_CLASIFICACION_SQL).fetchone()[0], solo_lectura=True)
+    except calculos.ErrorClasificacion:
+        return None
+    return None if isinstance(resultado, dict) else json.dumps(resultado, sort_keys=True, default=str)
+
+
+def invalidar_vista_organizacion(contexto):
+    """Guardar una clasificación descarta lo compartido de esa organización y dueño."""
+    with _CERROJO_VISTAS:
+        _VISTAS_ORGANIZACION.pop((contexto.get('organizacion'), contexto.get('dueno')), None)
+
+
 def _cargar_vista_carteras(contexto_validado=None):
-    """Sin UI ni memoria de sesión; el contexto se captura tras validar el ingreso."""
+    """Vista de carteras compartida por organización, después de validar Auth.
+
+    Sustituye la regla «jamás caché global» solo para esta vista: su contenido depende únicamente de
+    (organización, dueño) y de los datos comunes, nunca de la persona (admin y asesor ven lo mismo), y el
+    contexto llega ya validado por _contexto_clasificacion. La llave incluye el sello de versión; si no
+    cambió se sirve lo guardado sin bajar clasificacion_leer. Un único cálculo a la vez por organización.
+    """
+    import acceso
+    contexto = (dict(contexto_validado) if contexto_validado is not None
+                else _contexto_clasificacion(acceso.usuario()))
     fuente = _fuente_carteras_comun()
+    huella = _huella_comun(fuente)
+    if huella is None or contexto.get('rol') not in ('admin', 'asesor'):
+        return _calcular_vista(fuente, contexto, False)[0]
+    llave = (contexto['organizacion'], contexto['dueno'])
+    sello_previo = (huella, _sello_privado(contexto))
+    if sello_previo[1] is None:
+        return _calcular_vista(fuente, contexto, False)[0]
+    with _CERROJO_VISTAS:
+        registro = _VISTAS_ORGANIZACION.get(llave)
+        if registro and registro['sello'] == sello_previo:
+            return registro['vista']
+        tarea = registro['tarea'] if registro and registro['tarea_sello'] == sello_previo else None
+        if tarea is None:
+            tarea, propia = Future(), True
+            _VISTAS_ORGANIZACION[llave] = {**(registro or {'sello': None, 'vista': None}),
+                                           'tarea': tarea, 'tarea_sello': sello_previo}
+        else:
+            propia = False
+    if not propia:
+        import rapidez
+        return tarea.result(timeout=rapidez.TIEMPO_ESPERA)
+    try:
+        vista, sello = _calcular_vista(fuente, contexto, True)
+        with _CERROJO_VISTAS:
+            actual = _VISTAS_ORGANIZACION.get(llave)
+            if actual and actual.get('tarea') is tarea:
+                guardable = sello is not None and vista.get('estado') == 'habilitado'
+                _VISTAS_ORGANIZACION[llave] = {
+                    'sello': (huella, json.dumps(sello, sort_keys=True, default=str)) if guardable else None,
+                    'vista': vista if guardable else None, 'tarea': None, 'tarea_sello': None}
+        tarea.set_result(vista)
+        return vista
+    except BaseException as error:
+        with _CERROJO_VISTAS:
+            actual = _VISTAS_ORGANIZACION.get(llave)
+            if actual and actual.get('tarea') is tarea:
+                actual['tarea'] = actual['tarea_sello'] = None
+        tarea.set_exception(error)
+        raise
+
+
+def _calcular_vista(fuente, contexto, con_sello):
     filas = fuente.astype(object).where(pd.notna(fuente), None).to_dict('records')
-    if contexto_validado is None:
-        return componer_carteras_organizacion(filas)
-    return componer_carteras_organizacion(filas, contexto_validado=contexto_validado)
+    return _componer_con_sello(filas, contexto, con_sello)
 
 
 def _fuente_carteras_comun():
@@ -484,7 +587,20 @@ def resumen_carteras(vista=None):
         "select x.codigo_cnv, x.fecha_cartera, x.patrimonio from carteras_fechas x "
         "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
         "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
-    return calculos.resumenes_efectivos(cabeceras, vista)
+    # Resumen compartido junto con la vista de su organización; se rehace si cambian las cabeceras comunes.
+    try:
+        huella = int(pd.util.hash_pandas_object(cabeceras, index=False).sum())
+    except Exception:
+        return calculos.resumenes_efectivos(cabeceras, vista)
+    with _CERROJO_VISTAS:
+        registro = next((r for r in _VISTAS_ORGANIZACION.values() if r.get('vista') is vista), None)
+        if registro and registro.get('resumen_huella') == huella:
+            return registro['resumen']
+    resumen = calculos.resumenes_efectivos(cabeceras, vista)
+    with _CERROJO_VISTAS:
+        if registro is not None and registro.get('vista') is vista:
+            registro['resumen'], registro['resumen_huella'] = resumen, huella
+    return resumen
 
 
 def clases_gestion(vista=None):
@@ -552,6 +668,7 @@ def _escribir_clasificacion(instrumento_id, accion, parche, version_regla, versi
     try:
         return _clasificacion_transaccion(contexto, escribir)
     finally:
+        invalidar_vista_organizacion(contexto)
         acceso.invalidar_lecturas_privadas()
 
 
@@ -606,6 +723,7 @@ def guardar_edicion_ficha_lote(filas, valores, opciones):
     try:
         return _clasificacion_transaccion(contexto, escribir)
     finally:
+        invalidar_vista_organizacion(contexto)
         acceso.invalidar_lecturas_privadas()
 
 

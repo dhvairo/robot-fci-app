@@ -170,33 +170,58 @@ def _aplicar_parche(fuente, parche):
     return final
 
 
-def opciones_clasificacion(filas_fuente, reglas_organizacion, contexto):
-    """Tuplas completas únicas: fuente clasificada y valor privado vigente propio.
+def _identidades_lectura(filas):
+    """Normaliza cada objeto una vez; serializa una vez cada identidad completa."""
+    identidades, serializadas = {}, {}
+    for fila in filas:
+        if id(fila) in identidades:
+            continue
+        try:
+            # Una fuente de la base no trae codigo_cnv: evita la excepción en el caso corriente.
+            clave = _componentes(fila) if fila.get('codigo_cnv') is not None else None
+        except ErrorClasificacion:
+            clave = None
+        if clave not in serializadas:
+            serializadas[clave] = json.dumps(clave, ensure_ascii=False, separators=(',', ':'))
+        identidades[id(fila)] = (clave, serializadas[clave])
+    return identidades
 
-    Cada regla contiene fuente_base (dict), parche, instrumento (clave completa),
-    organizacion, dueno, activa y version. No se mezclan etiquetas individuales.
-    """
-    opciones = set()
-    for fila in filas_fuente:
+
+def _opciones_indexadas(filas, propias, identidades, tuplas=None):
+    """tuplas (opcional) recibe la tupla de cada objeto fila, para no recalcularla."""
+    opciones, por_instrumento = set(), {}
+    for fila in filas:
         tupla = _tupla_clasificacion(fila)
+        if tuplas is not None:
+            tuplas[id(fila)] = tupla
         if tupla:
             opciones.add(tupla)
-    for regla in _reglas_propias(reglas_organizacion, contexto):
-        tupla = _tupla_clasificacion(_aplicar_parche(regla.get("fuente_base") or {}, regla["parche"]))
+        if propias:
+            clave, serializada = identidades[id(fila)]
+            if clave is not None:
+                por_instrumento.setdefault(serializada, []).append(fila)
+    for regla in propias:
+        tupla = _tupla_clasificacion(_aplicar_parche(regla.get('fuente_base') or {}, regla['parche']))
         if tupla:
             opciones.add(tupla)
-        # Una regla parcial ya guardada hereda la fuente vigente. Su resultado
-        # sigue siendo una opción privada propia aunque cambie un campo heredado.
-        for fila in filas_fuente:
-            try:
-                clave = json.dumps(_componentes(fila), ensure_ascii=False, separators=(',', ':'))
-            except ErrorClasificacion:
-                continue
-            if clave == regla['instrumento']:
-                vigente = _tupla_clasificacion(_aplicar_parche(fila, regla['parche']))
-                if vigente:
-                    opciones.add(vigente)
+        for fila in por_instrumento.get(regla['instrumento'], ()):
+            vigente = _tupla_clasificacion(_aplicar_parche(fila, regla['parche']))
+            if vigente:
+                opciones.add(vigente)
     return tuple(sorted(opciones, key=lambda t: json.dumps(t, ensure_ascii=False)))
+
+
+def opciones_clasificacion(filas_fuente, reglas_organizacion, contexto):
+    """Tuplas completas propias; Índice por identidad, sin recorrer filas por regla."""
+    propias = _reglas_propias(reglas_organizacion, contexto)
+    return _opciones_indexadas(filas_fuente, propias, _identidades_lectura(filas_fuente))
+
+
+def _copiar_fila_lectura(fila):
+    # Las columnas SQL son escalares. Conservar también el contrato de entradas
+    # anidadas sin pagar deepcopy por cada columna escalar de cada fila.
+    return {k: deepcopy(v) if isinstance(v, (dict, list, set, tuple)) else v
+            for k, v in fila.items()}
 
 
 def validar_edicion(fuente, parche, opciones):
@@ -263,8 +288,14 @@ def componer_carteras(filas_fuente, snapshot, contexto):
     if snapshot['estado'] != 'habilitado':
         return deepcopy(snapshot)
     propias = _reglas_propias(snapshot['reglas'], contexto)
-    opciones = opciones_clasificacion(
-        filas_fuente + [f['fuente'] for f in snapshot['fuentes']], propias, contexto)
+    todas = filas_fuente + [f['fuente'] for f in snapshot['fuentes']]
+    # Sin reglas propias solo hace falta la identidad de las filas comunes.
+    identidades = _identidades_lectura(todas if propias else filas_fuente)
+    tuplas = {}
+    opciones = _opciones_indexadas(todas, propias, identidades, tuplas)
+    por_instrumento = {}
+    for regla in propias:
+        por_instrumento.setdefault(regla['instrumento'], []).append(regla)
     registros = {}
     for registro in snapshot['fuentes']:
         registros.setdefault(tuple(registro['componentes']), []).append(registro)
@@ -275,10 +306,7 @@ def componer_carteras(filas_fuente, snapshot, contexto):
         if codigo in fechas and fechas[codigo] != fecha:
             raise ErrorClasificacion('SNAPSHOT_MEZCLADO')
         fechas[codigo] = fecha
-        try:
-            clave = _componentes(fila)
-        except ErrorClasificacion:
-            clave = None
+        clave = identidades[id(fila)][0]
         componentes.append(clave)
         if clave:
             cantidades[clave] = cantidades.get(clave, 0) + 1
@@ -297,20 +325,21 @@ def componer_carteras(filas_fuente, snapshot, contexto):
         registro = candidatos[0] if bloqueo is None else None
         identidad = {'componentes': clave, 'estado': bloqueo or 'inequivoco',
                      'instrumento_id': registro['instrumento_id'] if registro else None}
-        serializada = json.dumps(clave, ensure_ascii=False, separators=(',', ':'))
-        reglas = [r for r in propias if r['instrumento'] == serializada] if registro else []
+        serializada = identidades[id(fila)][1]
+        reglas = por_instrumento.get(serializada, ()) if registro else ()
         if len(reglas) > 1:
             raise ErrorClasificacion('REGLAS_AMBIGUAS')
         regla = reglas[0] if reglas else None
         efectiva = (validar_edicion(fila, regla['parche'], opciones) if regla else
-                    {k: deepcopy(fila.get(k)) for k in CAMPOS_CLASIFICACION})
+                    {k: fila.get(k) for k in CAMPOS_CLASIFICACION})
         # La marca fuente explícita también forma parte del contrato U25.
         efectiva['sin_clasificar'] = (_tupla_clasificacion(efectiva) is None if regla
-                                     else _tupla_clasificacion(fila) is None)
-        pendiente = novedad_fuente(fila, regla, snapshot['decisiones'], contexto)
+                                     else tuplas[id(fila)] is None)
+        # Sin regla propia no hay novedad posible (novedad_fuente devuelve None).
+        pendiente = novedad_fuente(fila, regla, snapshot['decisiones'], contexto) if regla else None
         if pendiente:
             pendientes.add(pendiente['clave_decision'])
-        salida = {**deepcopy(fila), 'efectiva': efectiva, 'identidad': identidad,
+        salida = {**_copiar_fila_lectura(fila), 'efectiva': efectiva, 'identidad': identidad,
                   'bloqueo': bloqueo, 'procedencia': 'organizacion' if regla else 'fuente',
                   'revision': regla.get('version') if regla else None,
                   'parche': deepcopy(regla['parche']) if regla else {},
