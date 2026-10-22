@@ -1,4 +1,4 @@
-"""Acceso a la base: comunes compartidos por una hora; privados solo en sesión."""
+"""Acceso a la base: comunes compartidos por seis horas; privados solo en sesión."""
 import os
 import json
 import hashlib
@@ -366,11 +366,7 @@ def _vista_carteras_sin_cache():
     Solo consultar tiene caché global. La vista se pasa entre consumidores de una
     pantalla para que filtros, tablas y PDF usen exactamente el mismo snapshot.
     """
-    fuente = consultar(
-        "select c.*, c.rubro_cnv as rubro_cnv_original, "
-        "c.instrumento as instrumento_original, h.moneda as moneda_del_fondo_original "
-        "from carteras_ultima c join carteras_fechas h "
-        "using (codigo_cnv, fecha_cartera) order by c.codigo_cnv, c.orden")
+    fuente = _fuente_carteras_comun()
     resultado = componer_carteras_organizacion(
         fuente.astype(object).where(pd.notna(fuente), None).to_dict('records'))
     if resultado['estado'] == 'deshabilitado':
@@ -379,6 +375,15 @@ def _vista_carteras_sin_cache():
         motivos = sorted({f['bloqueo'] for f in resultado['filas'] if f['bloqueo']})
         st.caption('Se conserva la fuente por identidad: ' + ', '.join(motivos) + '.')
     return resultado
+
+
+def _fuente_carteras_comun():
+    """Fuente pública de la vista; la composición privada siempre queda fuera."""
+    return consultar(
+        "select c.*, c.rubro_cnv as rubro_cnv_original, "
+        "c.instrumento as instrumento_original, h.moneda as moneda_del_fondo_original "
+        "from carteras_ultima c join carteras_fechas h "
+        "using (codigo_cnv, fecha_cartera) order by c.codigo_cnv, c.orden")
 
 
 class VistaCompartida(dict):
@@ -392,6 +397,9 @@ class VistaCompartida(dict):
 
 
 def fondos_ficha(incluir_no_seguidos=False):
+    import rapidez
+    if incluir_no_seguidos and not rapidez.comunes_listos():
+        st.stop()
     try:
         privada = calculos.lectura_seguimiento_activa()
     except calculos.ErrorSeguimiento:
@@ -408,7 +416,6 @@ def fondos_ficha(incluir_no_seguidos=False):
         salida.attrs['clasificacion'] = VistaCompartida(vista)
         return salida
     import acceso
-    import rapidez
     # Con seguimiento privado el Auth se revalida en cada clic; apagado conserva el camino legado (sin Auth).
     contexto = _contexto_clasificacion(acceso.usuario()) if privada else None
     return rapidez.memorizar('fondos_ficha', componer, bool(incluir_no_seguidos), bool(privada),
@@ -581,7 +588,7 @@ def resolver_novedad_ficha(fila, accion):
                           fila['revision'], fila['version_fuente'])
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False)
 def _consultar_comun(sql, params, _fallo):
     _fallo.append(True)
     return _ejecutar(sql, params)

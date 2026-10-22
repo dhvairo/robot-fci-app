@@ -33,8 +33,12 @@ def mostrar_inicio():
     st.title("Inicio")
     st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura: lo único que la app puede hacer es anotar pedidos de seguir o dejar de seguir fondos.")
 
+    carga = rapidez.inicio()
+    if carga is None:
+        return
+    op, r, u, e = carga
+
     st.subheader("Última ejecución del robot")
-    op = operacion.obtener(st.secrets)
     for nombre, ejecucion in op["flujos"].items():
         {"ok": st.success, "aviso": st.warning, "error": st.error}[ejecucion["nivel"]](
             f"Robot {nombre}: {ejecucion['estado']}. Inicio de última ejecución (Argentina): {ejecucion['fecha']}")
@@ -44,7 +48,6 @@ def mostrar_inicio():
                "El estado de ejecución es independiente de la antigüedad del dato. "
                "Los enlaces a Actions requieren acceso al repositorio privado.")
 
-    r = rapidez.memorizar("inicio_resumen", datos.resumen_base)
 
 
     def miles(n):
@@ -76,7 +79,6 @@ def mostrar_inicio():
 
     st.subheader("Cuándo se actualiza cada dato")
     ahora = datetime.now(horarios.ARGENTINA)
-    u = rapidez.memorizar("inicio_entradas", datos.ultimas_entradas)
     cuadro = pd.DataFrame(
         horarios.filas_cuadro(horarios.cargar(), ahora, {k: u[k] for k in u.index}, formato.fecha_hora_ar),
         columns=["Dato", "Cuándo se actualiza", "Última vez que entró un dato nuevo", "Próxima corrida programada"])
@@ -87,7 +89,6 @@ def mostrar_inicio():
                "no se guarda nada.")
 
     st.subheader("Últimos archivos procesados por el robot")
-    e = rapidez.memorizar("inicio_robot", datos.estado_robot)
     if e.empty:
         st.info("Todavía no hay archivos procesados.")
     else:
@@ -110,6 +111,9 @@ def mostrar_inicio():
     """)
     st.caption("Los rendimientos no consideran distribución de utilidades. Esta herramienta informa; "
                "no es una recomendación de inversión.")
+    # Solo datos públicos; las composiciones de organización siguen en el hilo principal.
+    if hasattr(datos, '_fondos_ficha_comunes'):
+        rapidez.precalentar_comunes()
 
 
 try:

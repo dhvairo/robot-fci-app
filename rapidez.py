@@ -6,6 +6,92 @@ escribir (acceso.invalidar_lecturas_privadas) o a los 5 minutos. Las pantallas s
 import streamlit as st
 
 
+@st.cache_resource(ttl=600, max_entries=2, show_spinner=False)
+def _tarea_comun(clave, _cargar):
+    """Solo dos cargas públicas; nunca composiciones privadas ni derivados de sesión."""
+    from concurrent.futures import Future
+    from threading import Thread
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+    import calculos
+
+    resultado = Future()
+
+    def ejecutar():
+        try:
+            with calculos.medir_seguimiento('ARRANQUE_' + clave):
+                resultado.set_result(_cargar())
+        except BaseException:
+            # No conservar mensajes/conexiones en la caché compartida.
+            resultado.set_exception(RuntimeError('No se pudo completar la carga inicial.'))
+        finally:
+            from threading import current_thread
+            hilo = current_thread()
+            if hasattr(hilo, 'streamlit_script_run_ctx'):
+                del hilo.streamlit_script_run_ctx
+
+    hilo = Thread(target=ejecutar, name='carga-comun-' + clave, daemon=True)
+    ctx = get_script_run_ctx(suppress_warning=True)
+    if ctx is not None:
+        add_script_run_ctx(hilo, ctx)
+    hilo.start()
+    return resultado
+
+
+def _lista(clave, cargar):
+    """No bloquea el dibujo; el fragmento se retira al completar la carga."""
+    from concurrent.futures import TimeoutError
+    tarea = _tarea_comun(clave, cargar)
+    try:
+        tarea.result(timeout=0.03)  # los dobles/cachés calientes conservan el dibujo inmediato
+    except TimeoutError:
+        @st.fragment(run_every=0.25)
+        def esperar():
+            if tarea.done():
+                st.rerun()
+            st.caption('Cargando…')
+        esperar()
+        return False
+    except RuntimeError:
+        _tarea_comun.clear(clave, cargar)
+        st.error('No se pudo completar la carga inicial. Volvé a abrir la pantalla para reintentar.')
+        st.stop()
+    return True
+
+
+def inicio():
+    """Lectores comunes de Inicio, sin memoria ni identidad de usuario en el hilo."""
+    import datos
+    import operacion
+    def cargar():
+        return (operacion.obtener(st.secrets), datos.resumen_base(),
+                datos.ultimas_entradas(), datos.estado_robot())
+    if not _lista('INICIO', cargar):
+        return None
+    return _tarea_comun('INICIO', cargar).result()
+
+
+def precalentar_comunes():
+    """Las mismas claves SQL que consumen Comparador e Informe; sin historias/PDF."""
+    import datos
+    def cargar():
+        # Imports que el Comparador hace en su primera apertura; solo CPU, sin E/S.
+        import plotly.express  # noqa: F401
+        import consulta_puntual  # noqa: F401
+        import informe  # noqa: F401
+        catalogo = datos._fondos_ficha_comunes(True)
+        if not catalogo.empty:
+            datos._fuente_carteras_comun()
+    return _tarea_comun('CATALOGO', cargar)
+
+
+def comunes_listos():
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+    if get_script_run_ctx(suppress_warning=True) is None:
+        return True  # contratos puros y consola conservan la lectura sin hilo
+    tarea = precalentar_comunes()
+    return _lista('CATALOGO', tarea.result)
+
+
 def grafico_memorizado(clave, figura, *seleccion):
     """Serializa una vez el gráfico de lectura, como la tabla memorizada."""
     import plotly.io
