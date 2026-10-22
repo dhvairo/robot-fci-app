@@ -7,6 +7,7 @@ recarga.al_dia()          # si la app se publicó mientras estaba abierta, se le
 import acceso  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
+import rapidez  # noqa: E402
 
 st.set_page_config(page_title="Filas a revisar", page_icon="📈", layout="wide")
 acceso.requerir()
@@ -18,6 +19,7 @@ st.markdown(
     "o distribuciones de utilidades, que los rendimientos no consideran. No son necesariamente errores del robot.")
 
 dias = st.radio("Mostrar los últimos", [30, 60, 120, 365], index=2, horizontal=True, format_func=lambda d: f"{d} días")
+rapidez.comunes_listos()
 r = datos.filas_a_revisar(dias)
 if r.empty:
     st.success(f"No hay filas a revisar en los últimos {dias} días.")

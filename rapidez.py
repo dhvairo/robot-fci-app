@@ -46,37 +46,26 @@ def _lista(clave, cargar):
     return _esperar(_tarea_comun(clave, cargar))
 
 
+TIEMPO_ESPERA = 60
+
+
 def _esperar(tarea):
-    """La pantalla espera el trabajo existente, sin lanzar otra consulta."""
+    """Espera el mismo trabajo en esta corrida, con un límite y reintento explícito."""
     from concurrent.futures import TimeoutError
     try:
-        tarea.result(timeout=0.03)  # los dobles/cachés calientes conservan el dibujo inmediato
-    except TimeoutError:
-        st.session_state['_arranque_espera'] = tarea
-        st.caption('Cargando…')
-        return False
-    except RuntimeError:
+        if tarea.done():
+            tarea.result()
+        else:
+            with st.spinner('Cargando…'):
+                tarea.result(timeout=TIEMPO_ESPERA)
+    except (TimeoutError, RuntimeError) as error:
         _tarea_comun.clear()
         st.session_state.pop('_arranque_privado', None)
-        st.error('No se pudo completar la carga inicial. Volvé a abrir la pantalla para reintentar.')
+        mensaje = ('La carga inicial superó el tiempo de espera.' if isinstance(error, TimeoutError)
+                   else 'No se pudo completar la carga inicial.')
+        st.error(mensaje + ' Volvé a abrir la pantalla para reintentar.')
         st.stop()
     return True
-
-
-def _vigilar():
-    tarea = st.session_state.get('_arranque_espera')
-    if tarea is not None and tarea.done():
-        st.session_state.pop('_arranque_espera', None)
-        st.rerun()
-
-
-def actualizar_espera():
-    """Siempre registrado en el mismo lugar del marco, incluso al cambiar de página.
-
-    Al terminar se conserva su ID y se apaga el temporizador, evitando fragmentos retirados.
-    """
-    pendiente = st.session_state.get('_arranque_espera') is not None
-    st.fragment(_vigilar, run_every=0.25 if pendiente else None)()
 
 
 def precalentar_sesion(persona):
@@ -139,6 +128,7 @@ def precalentar_comunes():
         if not catalogo.empty:
             datos._fuente_carteras_comun()
             datos._clases_gestion_comunes()
+        datos.filas_a_revisar(120)
     return _tarea_comun('CATALOGO', cargar)
 
 
