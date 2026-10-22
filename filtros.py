@@ -8,7 +8,7 @@ TODOS = ("Todos", "Todas", "Todos", "Todas")
 
 
 def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=(),
-             persistente=False, visibles=None):
+             persistente=False, visibles=None, al_desmarcar=None):
     """Casillas independientes; el control general marca/desmarca las disponibles."""
     import hashlib
     import streamlit as st
@@ -24,6 +24,8 @@ def casillas(etiqueta, valores, clave, todas="Todos", formato=str, preferidas=()
 
         def guardar(v):
             memoria[v] = st.session_state.get(llaves[v], False)
+            if al_desmarcar and not memoria[v]:
+                al_desmarcar(v, memoria)
 
         def marcar_visibles():
             for v in visibles:
@@ -124,6 +126,21 @@ def lista_fondos(etiqueta, nombres, clave, defecto=(), vacio_todos=True):
                              placeholder="Todos · escribí para buscar" if vacio_todos else "Escribí para buscar fondos")
     st.session_state[memoria] = list(elegidos)
     return (elegidos or opciones) if vacio_todos else elegidos
+
+
+def quitar_fondo_sin_clases(sesion, codigo, memoria, clases, preferidas, clave='comparador_fondos'):
+    """Si desmarcar `codigo` deja a su fondo sin clases, saca el fondo de la lista y
+    devuelve sus clases a la selección por defecto (así no vuelve vacío)."""
+    fondo = clases.get(codigo)
+    hermanas = [c for c, f in clases.items() if f == fondo]
+    if any(memoria.get(c) for c in hermanas):
+        return False
+    for c in hermanas:
+        memoria[c] = c in preferidas
+    actuales = sesion.get(clave, sesion.get(clave + '_memoria', []))
+    sesion[clave + '_memoria'] = [f for f in actuales if f != fondo]
+    sesion.pop(clave, None)
+    return True
 
 
 def restablecer_informe(sesion):

@@ -54,9 +54,12 @@ preferidas = []
 for _, grupo in clases.groupby("codigo_cnv"):
     preferidas += datos.clases_preferidas(grupo).codigo_cafci.tolist()
 etiquetas = clases.set_index("codigo_cafci").etiqueta.to_dict()
+fondo_de = clases.set_index("codigo_cafci").codigo_cnv.to_dict()
 with st.expander("Clase", expanded=False):
     elegidas = filtros.casillas("Clase", clases.codigo_cafci.tolist(), "comparador_clases",
-                               todas="Todas", formato=etiquetas.get, preferidas=preferidas, persistente=True)
+                               todas="Todas", formato=etiquetas.get, preferidas=preferidas, persistente=True,
+                               al_desmarcar=lambda c, mem: filtros.quitar_fondo_sin_clases(
+                                   st.session_state, c, mem, fondo_de, set(preferidas)))
 if not elegidas:
     st.info("Elegí al menos una clase.")
     st.stop()
