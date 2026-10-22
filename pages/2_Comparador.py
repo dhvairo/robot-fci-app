@@ -94,17 +94,20 @@ if (~fondos.seguido).any():
 graficos = []
 serie_pdf = ser
 controles = calculos.controles_series(st.session_state, sel)
-opciones_series = {c['codigo']: c['nombre'] for c in controles}
-anteriores = st.session_state.get('comparador_series_elegidas')
+opciones_series = {c['codigo']: c['corto'] for c in controles}
+st.session_state.pop('comparador_series_elegidas', None)    # clave del multiselect de U103
+anteriores = st.session_state.get('comparador_series_pills')
 if not isinstance(anteriores, list):
-    st.session_state.pop('comparador_series_elegidas', None)
+    st.session_state.pop('comparador_series_pills', None)
     anteriores = None
 else:
     nuevas = set(opciones_series) - set(st.session_state.get('comparador_series_disponibles', []))
-    st.session_state['comparador_series_elegidas'] = [c for c in opciones_series if c in anteriores or c in nuevas]
-series_elegidas = st.multiselect('Series en el gráfico', list(opciones_series),
+    st.session_state['comparador_series_pills'] = [c for c in opciones_series if c in anteriores or c in nuevas]
+series_elegidas = st.pills('Series en el gráfico', list(opciones_series), selection_mode='multi',
     default=list(opciones_series) if anteriores is None else None,
-    format_func=opciones_series.get, key='comparador_series_elegidas')
+    format_func=opciones_series.get, key='comparador_series_pills',
+    help='Tocá una serie para sacarla o volver a ponerla en el gráfico, la tabla y el PDF. '
+         + ' | '.join(c['nombre'] for c in controles)) or []
 st.session_state['comparador_series_disponibles'] = list(opciones_series)
 for c in controles:
     c['visible'] = c['codigo'] in series_elegidas

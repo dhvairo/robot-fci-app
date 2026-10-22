@@ -453,6 +453,7 @@ def controles_series(sesion, clases):
             memoria[codigo] = {"color": paleta[len(memoria) % len(paleta)], "visible": True}
     return [{"codigo": int(c.codigo_cafci),
              "nombre": f"{c.etiqueta} · {c.moneda} · CAFCI {c.codigo_cafci}",
+             "corto": f"{c.etiqueta} · {c.moneda}",
              **memoria[int(c.codigo_cafci)]} for c in clases.itertuples()]
 
 
