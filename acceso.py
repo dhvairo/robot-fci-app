@@ -37,7 +37,7 @@ def _estado_rerun():
 def lectura_privada(clave, contexto, leer, copiar=True):
     """Copia de sesión por 5 minutos, después de validar Auth; no hay caché global de datos privados.
 
-    Única excepción (U110): la vista de carteras se comparte por organización en datos._cargar_vista_carteras
+    Excepciones: marca común U113 (organización/sello, cinco minutos) y vista U110 en datos._cargar_vista_carteras
     (llave organización/dueño + sello de versión; no depende de la persona).
     copiar=False entrega y guarda el objeto tal cual (solo lectura): no se copian estructuras grandes en cada
     sesión ni en cada clic."""
@@ -89,6 +89,8 @@ def memoria_derivada(llave, calcular):
 
 def invalidar_lecturas_privadas():
     st.session_state.pop('_arranque_privado', None)
+    st.session_state.pop('_arranque_ficha', None)
+    st.session_state.pop('_arranque_seguimiento', None)
     st.session_state.pop('_lecturas_privadas', None)
     st.session_state.pop('_derivados', None)
     st.session_state.pop('preferencias_usuario_cache', None)
@@ -129,8 +131,8 @@ def _backend_roles():
         url = secreto('APP_DB_URL')
         if not url:
             raise ErrorAcceso('conexion_roles_ausente')
-        import psycopg
-        return psycopg.connect(url, connect_timeout=20)
+        from datos import conexion_compartida
+        return conexion_compartida(url, connect_timeout=20)
     return PostgreSQL(conectar)
 
 
@@ -211,8 +213,8 @@ def lector_preferencias():
             url = secreto('APP_DB_URL')
             if not url:
                 raise ErrorAcceso('conexion_preferencias_ausente')
-            import psycopg
-            return psycopg.connect(url, connect_timeout=20)
+            from datos import prestar_conexion
+            return prestar_conexion(url, connect_timeout=20)
         backend = PostgreSQL(conectar)
     return backend, contexto
 
@@ -700,7 +702,7 @@ def _pantalla_usuarios():
 def preparar_ingreso(persona):
     """Marca y preferencias en paralelo; solo el hilo de sesión publica resultados.
 
-    La marca cruda no accede a session_state ni se guarda en recursos globales.
+    La marca común se comparte por organización y sello; preferencias solo en sesión.
     La caché privada conserva su identidad, vencimiento e invalidación habituales.
     """
     import datos
@@ -793,7 +795,15 @@ def requerir(accion='consultar'):
         enviar = st.form_submit_button("Entrar")
     if enviar:
         try:
-            ingresar(correo, clave)
+            marco = (_estado_rerun() or {}).get('pagina') is not None
+            if marco:
+                import rapidez
+                rapidez.esperar_conexiones()
+            persona = ingresar(correo, clave)
+            if not persona['cambio_obligatorio'] and marco:
+                import rapidez
+                rapidez.precalentar_sesion(persona)
+                preparar_ingreso(persona)
             st.rerun()
         except ErrorAcceso:
             st.error("No se pudo ingresar. Revisá el correo y la clave.")

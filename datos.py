@@ -21,77 +21,118 @@ load_dotenv(RAIZ / ".env")
 
 
 class _ConexionCompartida:
-    """Un recurso por configuración, serializado; GUC solo en transacciones."""
+    """Una conexión prestada a un único consumidor; GUC solo en transacciones."""
     def __init__(self):
-        self.lock = RLock()
         self.conn = None
 
 
 @st.cache_resource(show_spinner=False)
 def _recurso_conexion(args, opciones):
-    return _ConexionCompartida()
-
-
-@contextmanager
-def conexion_compartida(*args, **opciones):
-    import acceso
-    # Los contratos de consola/dobles conservan su conector independiente.
-    if acceso._estado_rerun() is None:
-        with calculos.medir_seguimiento('CONEXION'):
-            conn = psycopg.connect(*args, **opciones)
-        with conn as abierta:
-            yield abierta
-        return
-    recurso = _recurso_conexion(args, tuple(sorted(opciones.items())))
-    with recurso.lock:
-        with calculos.medir_seguimiento('CONEXION'):
-            if recurso.conn is None or recurso.conn.closed or recurso.conn.broken:
-                recurso.conn = psycopg.connect(*args, **opciones, autocommit=True)
-            conn = recurso.conn
-        try:
-            with conn.transaction():
-                yield conn
-        except BaseException:
-            conn.close()
-            recurso.conn = None
-            raise
-
-
-def _url():
-    try:
-        v = st.secrets["APP_DB_URL"]       # cuando la app está publicada
-    except Exception:
-        v = None
-    return v or os.environ.get("APP_DB_URL")
-
-
-@st.cache_resource(show_spinner=False)
-def _pool_comun(url):
-    """Seis conexiones públicas como máximo, sin GUC ni identidad de sesión."""
     pool = Queue()
     for _ in range(6):
         pool.put(_ConexionCompartida())
     return pool
 
 
+def _url():
+    try:
+        v = st.secrets["APP_DB_URL"]
+    except Exception:
+        v = None
+    return v or os.environ.get("APP_DB_URL")
+
+
+def _pool_comun(url):
+    return _recurso_conexion((url,), (('connect_timeout', 20),))
+
+
+_pool_comun.clear = _recurso_conexion.clear
+
+
+def preparar_conexiones():
+    """Solo arranque/monitor: abrir y comprobar recursos, nunca desde una pantalla."""
+    import acceso
+    configuraciones = [((_url(),), {'connect_timeout': 20})]
+    pedidos = acceso.secreto('PEDIDOS_DB_URL')
+    if pedidos:
+        configuraciones.append(((pedidos,), {'connect_timeout': 20}))
+    c = acceso.secreto('seguimiento_privado')
+    if c and c.get('activa') and c.get('host'):
+        configuraciones.append(((), {k: c[k] for k in
+            ('host', 'port', 'dbname', 'user', 'password', 'sslmode', 'connect_timeout')}))
+    def preparar(args, opciones):
+        pool = _recurso_conexion(args, tuple(sorted(opciones.items())))
+        recursos = [pool.get(timeout=60) for _ in range(6)]
+        def vivo(recurso):
+            try:
+                if recurso.conn is not None and not recurso.conn.closed and not recurso.conn.broken:
+                    try:
+                        recurso.conn.execute('select 1')
+                        return
+                    except Exception:
+                        recurso.conn.close()
+                recurso.conn = psycopg.connect(*args, **opciones, autocommit=True)
+            finally:
+                pool.put(recurso)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as hilos:
+            list(hilos.map(vivo, recursos))
+    for args, opciones in configuraciones:
+        if args and not args[0]:
+            continue
+        preparar(args, opciones)
+
+
+class _Prestamo:
+    """DB-API para preferencias: close devuelve al pool después de rollback."""
+    def __init__(self, pool, recurso):
+        self.pool, self.recurso = pool, recurso
+
+    def __getattr__(self, nombre):
+        return getattr(self.recurso.conn, nombre)
+
+    def close(self):
+        if self.recurso is not None:
+            recurso, self.recurso = self.recurso, None
+            try:
+                recurso.conn.rollback()
+            finally:
+                self.pool.put(recurso)
+
+
+def prestar_conexion(*args, **opciones):
+    pool = _recurso_conexion(args, tuple(sorted(opciones.items())))
+    recurso = pool.get(timeout=60)
+    if recurso.conn is None or recurso.conn.closed or recurso.conn.broken:
+        pool.put(recurso)
+        raise ErrorPreferencias('La conexión inicial está pendiente. Volvé a intentar.')
+    return _Prestamo(pool, recurso)
+
+
+@contextmanager
+def conexion_compartida(*args, **opciones):
+    import acceso
+    from streamlit.runtime import exists
+    if acceso._estado_rerun() is None and not exists():
+        with psycopg.connect(*args, **opciones) as conn:
+            yield conn
+        return
+    prestamo = prestar_conexion(*args, **opciones)
+    try:
+        with prestamo.recurso.conn.transaction():
+            yield prestamo.recurso.conn
+    finally:
+        prestamo.close()
+
+
 @contextmanager
 def _conexion_comun(url):
-    with calculos.medir_seguimiento('COMUN_POOL'):
-        pool = _pool_comun(url)
-        recurso = pool.get(timeout=60)
+    prestamo = prestar_conexion(url, connect_timeout=20)
     try:
-        if recurso.conn is None or recurso.conn.closed or recurso.conn.broken:
-            with calculos.medir_seguimiento('CONEXION_COMUN'):
-                recurso.conn = psycopg.connect(url, connect_timeout=20, autocommit=True)
-        try:
-            with recurso.conn.transaction():
-                yield recurso.conn
-        except BaseException:
-            recurso.conn.close()
-            recurso.conn = None
-            raise
+        with prestamo.recurso.conn.transaction():
+            yield prestamo.recurso.conn
     finally:
-        pool.put(recurso)
+        prestamo.close()
 
 
 TOPE_LECTURA_DIA = 150_000_000
@@ -167,7 +208,25 @@ def _personal(persona, sql, params=()):
 
 def organizacion(persona):
     import acceso
-    return acceso.lectura_privada('marca', persona, lambda: _organizacion_sin_cache(persona))
+    return acceso.lectura_privada('marca', persona, lambda: dict(_marca_organizacion(
+        persona['organizacion'], _persona=persona)[1]))
+
+
+@st.cache_resource(ttl=300, max_entries=128, show_spinner=False)
+def _marca_organizacion(organizacion, _persona):
+    """Marca común por organización; sello del contenido leído bajo RLS, no del usuario.
+
+    Se valida como máximo al vencer los mismos cinco minutos de la lectura anterior.
+    El primer Auth precalienta; no se consulta una organización antes de autorizarla.
+    """
+    valor = _organizacion_sin_cache(dict(_persona, organizacion=organizacion))
+    sello = hashlib.sha256(json.dumps(valor, sort_keys=True).encode('utf-8')).hexdigest()
+    return sello, _marca_por_sello(organizacion, sello, _valor=valor)
+
+
+@st.cache_resource(max_entries=128, show_spinner=False)
+def _marca_por_sello(organizacion, sello, _valor):
+    return dict(_valor)
 
 
 def _organizacion_sin_cache(persona):
@@ -217,11 +276,13 @@ class RepositorioSeguimiento:
         self.registro = dict(registro or {})
         self.conectar = conectar
 
-    def _operar(self, par, funcion):
+    def _operar(self, par, funcion, *, _contexto=None):
         import acceso
         motivo = 'CONTEXTO'
         try:
-            contexto = acceso.requerir_contexto_seguimiento(self.registro)
+            # El precalentado recibe la copia validada en el hilo de ingreso.
+            contexto = (acceso.requerir_contexto_seguimiento(self.registro)
+                        if _contexto is None else dict(_contexto))
             motivo = 'PAR'
             if tuple(par) != (contexto['organizacion'], contexto['dueno']):
                 raise calculos.ErrorSeguimiento('DUENO_AJENO')
@@ -261,8 +322,15 @@ class RepositorioSeguimiento:
             contexto = acceso.requerir_contexto_seguimiento(self.registro)
             if tuple(par) != (contexto['organizacion'], contexto['dueno']):
                 raise calculos.ErrorSeguimiento('DUENO_AJENO')
-            return acceso.lectura_privada(('seguimiento', getattr(self, 'clave_cache', id(self))),
-                                          contexto, lambda: self._operar(par, self._leer))
+            clave = getattr(self, 'clave_cache', id(self))
+            def cargar():
+                preparada = st.session_state.get('_arranque_seguimiento')
+                if preparada and preparada[:2] == (clave, contexto):
+                    import rapidez
+                    rapidez._esperar(preparada[2])
+                    return preparada[2].result()
+                return self._operar(par, self._leer)
+            return acceso.lectura_privada(('seguimiento', clave), contexto, cargar)
         except calculos.ErrorSeguimiento:
             raise
         except Exception as error:
@@ -588,9 +656,17 @@ def fondos_ficha(incluir_no_seguidos=False):
         raise
     def componer():
         incluir = True if privada else incluir_no_seguidos
-        comunes = rapidez.leer_comun('FONDOS_' + str(bool(incluir)), lambda: _fondos_ficha_comunes(incluir))
-        vista = vista_carteras()
-        salida = calculos.catalogo_efectivo(comunes, vista)
+        tarea_ficha = st.session_state.get('_arranque_ficha') if incluir else None
+        if tarea_ficha is not None and st.session_state.get('_arranque_privado'):
+            rapidez.vista_inicial()  # Revalidar identidad/versión antes de usar el resultado.
+            tarea_ficha = st.session_state['_arranque_ficha']
+            rapidez._esperar(tarea_ficha)
+            catalogo, vista = tarea_ficha.result()
+            salida = catalogo.copy()
+        else:
+            comunes = rapidez.leer_comun('FONDOS_' + str(bool(incluir)), lambda: _fondos_ficha_comunes(incluir))
+            vista = vista_carteras()
+            salida = calculos.catalogo_efectivo(comunes, vista)
         salida = _seguimiento_para_consulta(salida)
         if privada and not incluir_no_seguidos:
             salida = salida[salida['seguido']].copy()

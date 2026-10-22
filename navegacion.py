@@ -36,8 +36,14 @@ def mostrar(inicio):
 
     try:
         if st.session_state.get('auth'):
+            import rapidez
+            servidor = rapidez._SERVIDOR_PUBLICO is not None
+            if servidor:
+                rapidez.esperar_conexiones()
             persona = acceso._validar_sesion()
             if not persona['cambio_obligatorio']:
+                if servidor and persona['rol'] in ('admin', 'asesor', 'cliente'):
+                    rapidez.precalentar_sesion(persona)
                 acceso.preparar_ingreso(persona)
         activa = acceso.preferencias_activas()
         inicial = 'Inicio'

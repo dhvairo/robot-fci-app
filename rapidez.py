@@ -77,6 +77,8 @@ def _esperar(tarea):
     except (TimeoutError, RuntimeError) as error:
         _tarea_comun.clear()
         st.session_state.pop('_arranque_privado', None)
+        st.session_state.pop('_arranque_ficha', None)
+        st.session_state.pop('_arranque_seguimiento', None)
         mensaje = ('La carga inicial superó el tiempo de espera.' if isinstance(error, TimeoutError)
                    else 'No se pudo completar la carga inicial.')
         st.error(mensaje + ' Volvé a abrir la pantalla para reintentar.')
@@ -100,6 +102,22 @@ def precalentar_sesion(persona):
         return datos._cargar_vista_carteras(contexto)
     tarea = _lanzar('CLASIFICACION', cargar)
     st.session_state['_arranque_privado'] = (identidad, contexto, time.monotonic(), tarea)
+    def ficha():
+        import calculos
+        comunes = datos._fondos_ficha_comunes(True)
+        vista = tarea.result(timeout=TIEMPO_ESPERA)
+        return calculos.catalogo_efectivo(comunes, vista), vista
+    st.session_state['_arranque_ficha'] = _lanzar('FICHA', ficha, publica=True)
+    import acceso
+    lector = acceso.lector_seguimiento()
+    if lector is not None and isinstance(lector[0], datos.RepositorioSeguimiento):
+        backend, resolver = lector
+        validado = dict(resolver())
+        par = (validado['organizacion'], validado['dueno'])
+        lectura = _lanzar('SEGUIMIENTO', lambda: backend._operar(
+            par, backend._leer, _contexto=validado), publica=True)
+        st.session_state['_arranque_seguimiento'] = (
+            getattr(backend, 'clave_cache', id(backend)), validado, lectura)
     return tarea
 
 
@@ -218,6 +236,10 @@ def memorizar(clave, calcular, *seleccion, contexto=None):
     return acceso.memoria_derivada((clave, identidad, datos.version_comun(), seleccion), calcular)
 
 
+from threading import Event
+_POOLS_INICIADOS = globals().get('_POOLS_INICIADOS', Event())
+
+
 _OPERACION_PUBLICA = globals().get('_OPERACION_PUBLICA')
 _SERVIDOR_PUBLICO = globals().get('_SERVIDOR_PUBLICO')
 
@@ -236,10 +258,22 @@ def _imports_comunes():
     inspect.getmodule(None, '<precalentado>')  # Indexar módulos, incluso sin frames de la app.
 
 
+def esperar_conexiones():
+    """El ingreso recoge el arranque del pool, sin abrir conexiones en el hilo de UI."""
+    if _POOLS_INICIADOS.is_set():
+        return True
+    _esperar(_tarea_comun('CONEXIONES', __import__('datos').preparar_conexiones))
+
+
 def _ciclo_servidor():
     global _OPERACION_PUBLICA
     import datos
     import operacion
+    if not _POOLS_INICIADOS.is_set():
+        _tarea_comun('CONEXIONES', datos.preparar_conexiones).result(timeout=TIEMPO_ESPERA)
+        _POOLS_INICIADOS.set()
+    else:
+        datos.preparar_conexiones()
     datos.refrescar_comunes()
     catalogo = precalentar_comunes()
     def inicio_publico():
