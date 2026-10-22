@@ -9,6 +9,11 @@ import streamlit as st
 @st.cache_resource(ttl=600, max_entries=2, show_spinner=False)
 def _tarea_comun(clave, _cargar):
     """Solo dos cargas públicas; nunca composiciones privadas ni derivados de sesión."""
+    return _lanzar(clave, _cargar)
+
+
+def _lanzar(clave, cargar):
+    """El trabajador entrega un resultado: nunca escribe estado de sesión ni dibuja."""
     from concurrent.futures import Future
     from threading import Thread
     from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -19,7 +24,7 @@ def _tarea_comun(clave, _cargar):
     def ejecutar():
         try:
             with calculos.medir_seguimiento('ARRANQUE_' + clave):
-                resultado.set_result(_cargar())
+                resultado.set_result(cargar())
         except BaseException:
             # No conservar mensajes/conexiones en la caché compartida.
             resultado.set_exception(RuntimeError('No se pudo completar la carga inicial.'))
@@ -38,24 +43,76 @@ def _tarea_comun(clave, _cargar):
 
 
 def _lista(clave, cargar):
-    """No bloquea el dibujo; el fragmento se retira al completar la carga."""
+    return _esperar(_tarea_comun(clave, cargar))
+
+
+def _esperar(tarea):
+    """La pantalla espera el trabajo existente, sin lanzar otra consulta."""
     from concurrent.futures import TimeoutError
-    tarea = _tarea_comun(clave, cargar)
     try:
         tarea.result(timeout=0.03)  # los dobles/cachés calientes conservan el dibujo inmediato
     except TimeoutError:
-        @st.fragment(run_every=0.25)
-        def esperar():
-            if tarea.done():
-                st.rerun()
-            st.caption('Cargando…')
-        esperar()
+        st.session_state['_arranque_espera'] = tarea
+        st.caption('Cargando…')
         return False
     except RuntimeError:
-        _tarea_comun.clear(clave, cargar)
+        _tarea_comun.clear()
+        st.session_state.pop('_arranque_privado', None)
         st.error('No se pudo completar la carga inicial. Volvé a abrir la pantalla para reintentar.')
         st.stop()
     return True
+
+
+def _vigilar():
+    tarea = st.session_state.get('_arranque_espera')
+    if tarea is not None and tarea.done():
+        st.session_state.pop('_arranque_espera', None)
+        st.rerun()
+
+
+def actualizar_espera():
+    """Siempre registrado en el mismo lugar del marco, incluso al cambiar de página.
+
+    Al terminar se conserva su ID y se apaga el temporizador, evitando fragmentos retirados.
+    """
+    pendiente = st.session_state.get('_arranque_espera') is not None
+    st.fragment(_vigilar, run_every=0.25 if pendiente else None)()
+
+
+def precalentar_sesion(persona):
+    """Una tarea privada por sesión/identidad, invalidada junto con las lecturas."""
+    import time
+    import datos
+    contexto = datos._contexto_clasificacion(persona)
+    identidad = tuple(sorted(dict(persona).items()))
+    anterior = st.session_state.get('_arranque_privado')
+    if anterior and anterior[:2] == (identidad, contexto) and time.monotonic() - anterior[2] < 300:
+        return anterior[3]
+    comun = precalentar_comunes()
+    def cargar():
+        comun.result()
+        vista = datos._cargar_vista_carteras(contexto)
+        datos.resumen_carteras(vista)
+        return vista
+    tarea = _lanzar('CLASIFICACION', cargar)
+    st.session_state['_arranque_privado'] = (identidad, contexto, time.monotonic(), tarea)
+    return tarea
+
+
+def vista_inicial():
+    import acceso
+    import datos
+    anterior = st.session_state.get('_arranque_privado')
+    if anterior is None:
+        return None  # contratos puros y lectores sin ingreso conservan su camino
+    persona = acceso.usuario()
+    contexto = datos._contexto_clasificacion(persona)
+    tarea = precalentar_sesion(persona)
+    if contexto != st.session_state['_arranque_privado'][1]:
+        return None
+    if not _esperar(tarea):
+        st.stop()
+    return tarea.result()
 
 
 def inicio():
@@ -81,6 +138,7 @@ def precalentar_comunes():
         catalogo = datos._fondos_ficha_comunes(True)
         if not catalogo.empty:
             datos._fuente_carteras_comun()
+            datos._clases_gestion_comunes()
     return _tarea_comun('CATALOGO', cargar)
 
 
@@ -89,7 +147,7 @@ def comunes_listos():
     if get_script_run_ctx(suppress_warning=True) is None:
         return True  # contratos puros y consola conservan la lectura sin hilo
     tarea = precalentar_comunes()
-    return _lista('CATALOGO', tarea.result)
+    return _esperar(tarea)
 
 
 def grafico_memorizado(clave, figura, *seleccion):

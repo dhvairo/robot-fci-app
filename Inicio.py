@@ -111,7 +111,7 @@ def mostrar_inicio():
     """)
     st.caption("Los rendimientos no consideran distribución de utilidades. Esta herramienta informa; "
                "no es una recomendación de inversión.")
-    # Solo datos públicos; las composiciones de organización siguen en el hilo principal.
+    # También disponible al ejecutar Inicio con un acceso sustituido en pruebas.
     if hasattr(datos, '_fondos_ficha_comunes'):
         rapidez.precalentar_comunes()
 

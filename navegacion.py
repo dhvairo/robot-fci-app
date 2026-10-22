@@ -66,4 +66,11 @@ def mostrar(inicio):
     estado = acceso._estado_rerun()
     if estado is not None:      # solo el nombre de la pantalla, para el registro de tiempos por pantalla
         estado['pagina'] = str(getattr(pagina, 'url_path', '') or 'Inicio')
-    pagina.run()
+    import rapidez
+    observador = st.empty()
+    st.session_state.pop('_arranque_espera', None)
+    try:
+        pagina.run()
+    finally:
+        with observador.container():
+            rapidez.actualizar_espera()

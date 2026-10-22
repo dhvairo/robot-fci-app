@@ -85,6 +85,7 @@ def memoria_derivada(llave, calcular):
 
 
 def invalidar_lecturas_privadas():
+    st.session_state.pop('_arranque_privado', None)
     st.session_state.pop('_lecturas_privadas', None)
     st.session_state.pop('_derivados', None)
     st.session_state.pop('preferencias_usuario_cache', None)
@@ -746,6 +747,11 @@ def requerir(accion='consultar'):
         marca.mostrar()
         if persona["rol"] == "admin":
             _pantalla_usuarios()
+        # El marco de navegación identifica las corridas de la app completa.
+        # Los consumidores puros de acceso no deben disparar consultas de pantallas.
+        if (_estado_rerun() or {}).get('pagina') is not None and persona['rol'] in ('admin', 'asesor', 'cliente'):
+            import rapidez
+            rapidez.precalentar_sesion(persona)
         return
     st.title(marca.nombre())
     st.caption("Acceso restringido.")

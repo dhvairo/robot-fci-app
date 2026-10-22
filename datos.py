@@ -325,7 +325,7 @@ def _leer_clasificaciones(conn, identificadores, contexto):
     return resultado
 
 
-def componer_carteras_organizacion(filas_fuente):
+def componer_carteras_organizacion(filas_fuente, *, contexto_validado=None):
     """U29: entrada servidor sin pantallas ni caché privada global.
 
     Recibe las carteras comunes ya cargadas (listas de dicts), no agregados ni
@@ -334,7 +334,8 @@ def componer_carteras_organizacion(filas_fuente):
     import acceso
     from psycopg.types.json import Jsonb
 
-    contexto = _contexto_clasificacion(acceso.usuario())
+    contexto = (dict(contexto_validado) if contexto_validado is not None
+                else _contexto_clasificacion(acceso.usuario()))
     claves = set()
     for fila in filas_fuente:
         try:
@@ -366,15 +367,25 @@ def _vista_carteras_sin_cache():
     Solo consultar tiene caché global. La vista se pasa entre consumidores de una
     pantalla para que filtros, tablas y PDF usen exactamente el mismo snapshot.
     """
-    fuente = _fuente_carteras_comun()
-    resultado = componer_carteras_organizacion(
-        fuente.astype(object).where(pd.notna(fuente), None).to_dict('records'))
+    import rapidez
+    resultado = rapidez.vista_inicial()
+    if resultado is None:
+        resultado = _cargar_vista_carteras()
     if resultado['estado'] == 'deshabilitado':
         st.caption(resultado['mensaje'])
     elif any(f['bloqueo'] for f in resultado['filas']):
         motivos = sorted({f['bloqueo'] for f in resultado['filas'] if f['bloqueo']})
         st.caption('Se conserva la fuente por identidad: ' + ', '.join(motivos) + '.')
     return resultado
+
+
+def _cargar_vista_carteras(contexto_validado=None):
+    """Sin UI ni memoria de sesión; el contexto se captura tras validar el ingreso."""
+    fuente = _fuente_carteras_comun()
+    filas = fuente.astype(object).where(pd.notna(fuente), None).to_dict('records')
+    if contexto_validado is None:
+        return componer_carteras_organizacion(filas)
+    return componer_carteras_organizacion(filas, contexto_validado=contexto_validado)
 
 
 def _fuente_carteras_comun():
