@@ -290,18 +290,23 @@ class RepositorioSeguimiento:
                 raise calculos.ErrorSeguimiento('PERSISTENCIA_NO_CONFIGURADA')
             motivo = 'CONEXION'
             with self.conectar() as conn:
-                motivo = 'GUC'
-                conn.execute("select set_config('seguimiento.organizacion', %s, true), "
-                             "set_config('seguimiento.dueno', %s, true), "
-                             "set_config('seguimiento.usuario', %s, true), "
-                             "set_config('seguimiento.rol', %s, true), "
-                             "set_config('seguimiento.version_clave', %s, true)",
-                             tuple(contexto[k] for k in
-                                   ('organizacion', 'dueno', 'usuario', 'rol', 'version_clave')))
-                motivo = 'OPERACION'
-                with calculos.medir_seguimiento('CONSULTA_SEGUIMIENTO'):
-                    resultado = funcion(conn, contexto)
-                motivo = 'COMMIT'
+                # SET LOCAL y la lectura siempre comparten transacción, aun con autocommit.
+                from contextlib import nullcontext
+                from psycopg.pq import TransactionStatus
+                iniciar = getattr(conn, 'autocommit', False) and conn.info.transaction_status == TransactionStatus.IDLE
+                with conn.transaction() if iniciar else nullcontext():
+                    motivo = 'GUC'
+                    conn.execute("select set_config('seguimiento.organizacion', %s, true), "
+                                 "set_config('seguimiento.dueno', %s, true), "
+                                 "set_config('seguimiento.usuario', %s, true), "
+                                 "set_config('seguimiento.rol', %s, true), "
+                                 "set_config('seguimiento.version_clave', %s, true)",
+                                 tuple(contexto[k] for k in
+                                       ('organizacion', 'dueno', 'usuario', 'rol', 'version_clave')))
+                    motivo = 'OPERACION'
+                    with calculos.medir_seguimiento('CONSULTA_SEGUIMIENTO'):
+                        resultado = funcion(conn, contexto)
+                    motivo = 'COMMIT'
             return resultado  # Solo después del commit, incluso si este falla.
         except calculos.ErrorSeguimiento as error:
             calculos.registrar_fallo_seguimiento('PERSISTENCIA', motivo, error)

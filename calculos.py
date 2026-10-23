@@ -944,7 +944,9 @@ def registrar_fallo_seguimiento(etapa, motivo, error):
     """Solo códigos internos y SQLSTATE; nunca mensajes, parámetros ni traceback."""
     estado = getattr(error, 'sqlstate', None)
     estado = estado if isinstance(estado, str) and re.fullmatch(r'[0-9A-Z]{5}', estado) else 'SIN_SQLSTATE'
-    logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO %s %s %s', etapa, motivo, estado)
+    tipo = type(error).__name__
+    tipo = tipo if re.fullmatch(r'[A-Za-z_]{1,80}', tipo) else 'Error'
+    logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO %s %s %s %s', etapa, motivo, estado, tipo)
 
 
 def _contexto_seguimiento(resolver):

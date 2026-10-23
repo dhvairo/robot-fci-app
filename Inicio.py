@@ -31,6 +31,7 @@ st.set_page_config(page_title=marca.nombre(), page_icon="📈", layout="wide")
 def mostrar_inicio():
     acceso.requerir()
     st.title("Inicio")
+    acceso.mostrar_estado_roles()
     st.caption("Base de datos propia de fondos comunes de inversión argentinos. Solo lectura: lo único que la app puede hacer es anotar pedidos de seguir o dejar de seguir fondos.")
 
     carga = rapidez.inicio()

@@ -73,6 +73,10 @@ class PostgreSQL:
             return c.execute('select public.roles_resolver(%s::uuid,%s)',
                              (usuario, organizacion)).fetchone()[0]
 
+    def version(self, organizacion):
+        with self.conectar() as c:
+            return c.execute('select public.roles_version(%s)', (organizacion,)).fetchone()[0]
+
     def panel(self, usuario):
         with self.conectar() as c:
             return c.execute('select public.roles_panel(%s::uuid)', (usuario,)).fetchone()[0]

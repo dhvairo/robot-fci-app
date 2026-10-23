@@ -141,6 +141,12 @@ def rol():
     return _validar_sesion()['rol']
 
 
+def mostrar_estado_roles():
+    persona = usuario() or {}
+    if persona.get('rol') == 'admin' or persona.get('superadmin'):
+        st.caption('Roles: encendidos' if roles_activos() else 'Roles: apagados')
+
+
 def permitido(accion, dueno_del_dato=None):
     """Fachada Auth; el contrato puro de cinco argumentos vive en permisos.py."""
     if not roles_activos():
@@ -445,6 +451,21 @@ def _validar_sesion(forzar=False):
     if estado is None:
         return _validar_sesion_real()
     sesion = st.session_state.get('auth')
+    if sesion and 'roles_version' not in estado:
+        activa = roles_activos()
+        backend = _backend_roles() if activa else None
+        try:
+            version = backend.version(sesion['persona']['organizacion']) if hasattr(backend, 'version') else None
+        except Exception:
+            invalidar_lecturas_privadas()
+            sesion.pop('_validacion', None)
+            raise ErrorAcceso('No se pudo comprobar la autorización.') from None
+        sello = (activa, version)
+        estado['roles_version'] = sello
+        if sesion.get('_roles_version', (False, None)) != sello:
+            invalidar_lecturas_privadas()
+            sesion.pop('_validacion', None)
+        sesion['_roles_version'] = sello
     llave = (sesion.get('access_token'), dict(sesion.get('persona', {})), roles_activos()) if sesion else None
     anterior = sesion.get('_validacion') if sesion else None
     if (not forzar and anterior is not None and anterior[0] == llave
@@ -500,9 +521,9 @@ def cerrar_sesion():
         st.session_state.clear()
 
 
-def _admin(forzar=False):
+def _admin(forzar=False, claves=False):
     persona = revalidar_escritura() if forzar else _validar_sesion()
-    if persona["rol"] != "admin" or persona["cambio_obligatorio"]:
+    if (persona["rol"] != "admin" and not (claves and persona.get('superadmin'))) or persona["cambio_obligatorio"]:
         raise ErrorAcceso("Solo el administrador puede gestionar usuarios.")
     return persona
 
@@ -610,12 +631,14 @@ def crear_usuario(correo, confirmacion=None, admin=False, inicial=False):
 
 
 def listar_usuarios():
-    persona = _admin()
+    persona = _admin(claves=True)
     salida = []
     pagina = 1
     while True:
         usuarios = _api("GET", f"admin/users?page={pagina}&per_page=100", admin=True).get("users", [])
-        salida.extend({"id": u["id"], "correo": u.get("email", ""), "rol": u["app_metadata"].get("rol", "asesor")}
+        salida.extend({"id": u["id"], "correo": u.get("email", ""), "rol":
+                       (_backend_roles().rol(u['id'], persona['organizacion']) if roles_activos()
+                        else u["app_metadata"].get("rol", "asesor"))}
                       for u in usuarios if u.get("app_metadata", {}).get("organizacion") == persona["organizacion"])
         if len(usuarios) < 100:
             return salida
@@ -623,7 +646,7 @@ def listar_usuarios():
 
 
 def restablecer_clave(identificador, clave, confirmacion):
-    persona = _admin(forzar=True)
+    persona = _admin(forzar=True, claves=True)
     if len(clave) < 12 or clave != confirmacion:
         raise ErrorAcceso("Usá al menos 12 caracteres y repetí la misma clave.")
     identificador = str(UUID(identificador))
@@ -653,34 +676,35 @@ def cambiar_clave(clave, confirmacion):
 
 
 def _pantalla_usuarios():
-    _admin()
+    _admin(claves=True)
     with st.sidebar.expander("Usuarios"):
         try:
-            with st.form("crear_usuario", clear_on_submit=True):
-                correo = st.text_input("Correo del nuevo usuario")
-                repetir = st.text_input("Repetí el correo")
-                admin = st.checkbox("Administrador de la organización")
-                revisar = st.form_submit_button("Revisar alta")
-            if revisar:
-                st.session_state.pop("alta_pendiente", None)
-                correo = validar_correo(correo, repetir)
-                st.session_state["alta_pendiente"] = (correo, admin)
-            pendiente = st.session_state.get("alta_pendiente")
-            if pendiente:
-                correo, admin = pendiente
-                st.write("Correo final: " + correo)
-                st.write("Rol: " + ("Administrador" if admin else "Asesor"))
-                aviso = aviso_dominio(correo)
-                if aviso:
-                    st.warning(aviso)
-                if st.button("Confirmar alta"):
+            if usuario()["rol"] == "admin":
+                with st.form("crear_usuario", clear_on_submit=True):
+                    correo = st.text_input("Correo del nuevo usuario")
+                    repetir = st.text_input("Repetí el correo")
+                    admin = st.checkbox("Administrador de la organización")
+                    revisar = st.form_submit_button("Revisar alta")
+                if revisar:
                     st.session_state.pop("alta_pendiente", None)
-                    temporal = crear_usuario(correo, correo, admin=admin)
-                    st.caption("Clave temporal: pasala a la persona. Se muestra una sola vez.")
-                    st.code(temporal, language=None)
-                if st.button("Cancelar alta"):
-                    st.session_state.pop("alta_pendiente", None)
-                    st.rerun()
+                    correo = validar_correo(correo, repetir)
+                    st.session_state["alta_pendiente"] = (correo, admin)
+                pendiente = st.session_state.get("alta_pendiente")
+                if pendiente:
+                    correo, admin = pendiente
+                    st.write("Correo final: " + correo)
+                    st.write("Rol: " + ("Administrador" if admin else "Asesor"))
+                    aviso = aviso_dominio(correo)
+                    if aviso:
+                        st.warning(aviso)
+                    if st.button("Confirmar alta"):
+                        st.session_state.pop("alta_pendiente", None)
+                        temporal = crear_usuario(correo, correo, admin=admin)
+                        st.caption("Clave temporal: pasala a la persona. Se muestra una sola vez.")
+                        st.code(temporal, language=None)
+                    if st.button("Cancelar alta"):
+                        st.session_state.pop("alta_pendiente", None)
+                        st.rerun()
             if st.button("Ver usuarios"):
                 st.session_state["mostrar_usuarios"] = True
             if st.session_state.get("mostrar_usuarios"):
@@ -779,7 +803,7 @@ def requerir(accion='consultar'):
             st.error("No se pudo cargar la organización y sus preferencias.")
             st.stop()
         marca.mostrar()
-        if persona["rol"] == "admin":
+        if persona["rol"] == "admin" or persona.get('superadmin'):
             _pantalla_usuarios()
         # El marco de navegación identifica las corridas de la app completa.
         # Los consumidores puros de acceso no deben disparar consultas de pantallas.
