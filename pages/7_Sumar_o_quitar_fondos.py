@@ -3,6 +3,7 @@ temática. La app solo ANOTA el pedido; el robot lo atiende en su próxima corri
 from datetime import datetime
 from inspect import signature
 
+import pandas as pd
 import streamlit as st
 
 import recarga
@@ -12,11 +13,25 @@ import acceso  # noqa: E402
 import calculos  # noqa: E402
 import datos  # noqa: E402
 import formato  # noqa: E402
+import rapidez  # noqa: E402
 import horarios  # noqa: E402
+
+def mostrar_tabla(tabla, **opciones):
+    if st.session_state.get("pedidos_vista", "Tabla") == "Tarjetas" and "on_select" not in opciones:
+        base = tabla.data if hasattr(tabla, "data") else tabla
+        columnas = tuple(str(c) for c in base.columns)
+        filas = tuple(tuple(formato.texto_o_guion(v) if not pd.isna(v) else formato.VACIO
+                            for v in fila) for fila in base.itertuples(index=False, name=None))
+        html = rapidez.memorizar("pedidos_tarjetas", lambda: formato.tarjetas_html(columnas, filas), columnas, filas)
+        st.markdown(html, unsafe_allow_html=True)
+    else:
+        st.dataframe(tabla, **opciones)
+
 
 st.set_page_config(page_title="Sumar o quitar fondos", page_icon="📈", layout="wide")
 acceso.requerir()
 st.title("Sumar o quitar fondos")
+st.segmented_control("Vista", ["Tabla", "Tarjetas"], default="Tabla", key="pedidos_vista")
 
 corridas = horarios.cargar_procesador()
 proxima = horarios.proxima_del_procesador(corridas, datetime.now(horarios.ARGENTINA))
@@ -116,7 +131,14 @@ else:
         # También señala la llegada desde Ficha en versiones sin selection_default.
         estilo = estilo.style.set_properties(subset=(tabla.index[[codigos.index(codigo)]], slice(None)),
                                        **{"font-weight": "bold"})
-    st.dataframe(estilo, hide_index=True, width="stretch", height=260, key=clave,
+    if st.session_state.get("pedidos_vista") == "Tarjetas":
+        mostrar_tabla(formato.tabla(tabla, booleanos=["¿Se sigue?"]))
+        nombres_tarjetas = dict(zip(mostrados.codigo_cnv, mostrados.nombre))
+        st.selectbox("Elegir fondo de las tarjetas", codigos, index=None,
+            format_func=nombres_tarjetas.get, key="pedidos_tarjeta_elegida",
+            on_change=lambda: st.session_state.update(fondo_elegido=st.session_state["pedidos_tarjeta_elegida"]))
+        codigo = st.session_state.get("fondo_elegido")
+    mostrar_tabla(estilo, hide_index=True, width="stretch", height=260, key=clave,
                  on_select=lambda: seleccionar_fila(clave, codigos), selection_mode="single-row", **opciones)
 
     # ───────── El fondo elegido ─────────
@@ -193,7 +215,7 @@ else:
     lista["Pedido"] = lista["Pedido"].astype(str)
     lista["Motivo o nota"] = lista["Motivo o nota"].map(formato.texto_o_guion)
     lista["Fondo"] = lista["Fondo"].map(formato.texto_o_guion)
-    st.dataframe(formato.tabla(lista[["Pedido", "Fondo", "Qué se pidió", "Estado", "Motivo o nota", "Pedido el", "Atendido el"]],
+    mostrar_tabla(formato.tabla(lista[["Pedido", "Fondo", "Qué se pidió", "Estado", "Motivo o nota", "Pedido el", "Atendido el"]],
                                fechas_hora_ar=["Pedido el", "Atendido el"]), hide_index=True, width="stretch")
     st.caption("Horas en hora de Argentina. «Pendiente»: el robot todavía no lo atendió. «Listo»: ya se hizo. "
                "«Problema»: no se pudo; el motivo dice por qué.")

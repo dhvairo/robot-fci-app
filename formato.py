@@ -143,3 +143,24 @@ def plotly_es(fig, fechas_x=False):
     if fechas_x:
         fig.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y")
     return fig
+
+
+def filas_a_tarjetas(filas):
+    """Filas ordenadas -> título y pares etiqueta/valor; no modifica el origen."""
+    import pandas as pd
+    tarjetas = []
+    for fila in filas:
+        pares = [(str(k), VACIO if pd.isna(v) else texto_o_guion(v)) for k, v in fila.items()]
+        if pares:
+            tarjetas.append({"titulo": pares[0][1], "campos": pares[1:]})
+    return tarjetas
+
+
+def tarjetas_html(columnas, filas):
+    """HTML escapado para memorizar en sesión; sin estilos ni datos persistidos."""
+    from html import escape
+    tarjetas = filas_a_tarjetas([dict(zip(columnas, fila)) for fila in filas])
+    return '<div class="fci-tarjetas">' + ''.join(
+        '<article class="fci-tarjeta"><h3>' + escape(t['titulo']) + '</h3><dl>' +
+        ''.join('<dt>' + escape(k) + '</dt><dd>' + escape(v) + '</dd>' for k, v in t['campos']) +
+        '</dl></article>' for t in tarjetas) + '</div>'

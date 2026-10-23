@@ -215,10 +215,23 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
 PALETA = marca.COLORES_RUBROS
 GRIS = marca.RUBRO_GRIS
 
+def mostrar_tabla(tabla, **opciones):
+    if st.session_state.get("ficha_vista", "Tabla") == "Tarjetas" and "on_select" not in opciones:
+        base = tabla.data if hasattr(tabla, "data") else tabla
+        columnas = tuple(str(c) for c in base.columns)
+        filas = tuple(tuple(formato.texto_o_guion(v) if not pd.isna(v) else formato.VACIO
+                            for v in fila) for fila in base.itertuples(index=False, name=None))
+        html = rapidez.memorizar("ficha_tarjetas", lambda: formato.tarjetas_html(columnas, filas), columnas, filas)
+        st.markdown(html, unsafe_allow_html=True)
+    else:
+        st.dataframe(tabla, **opciones)
+
+
 st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide")
 acceso.requerir()
 inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Ficha por fondo")
+st.segmented_control("Vista", ["Tabla", "Tarjetas"], default="Tabla", key="ficha_vista")
 
 st.button("Restablecer", on_click=filtros.restablecer_ficha, args=(st.session_state,))
 
@@ -321,7 +334,7 @@ else:
                 "30 días %", "Mes %", "Año %", "12 meses %"]
         tabla_pdf = formato.tabla(tabla[cols], fechas=["Fecha"], enteros=["Patrimonio"],
                                    numeros={"Cuotaparte": 4, **{c: 2 for c in cols if c.endswith("%")}})
-        st.dataframe(tabla_pdf,
+        mostrar_tabla(tabla_pdf,
                      hide_index=True, width="stretch")
         calculados = seguido or (puntual is not None and not puntual["rendimientos"].empty)
         nota = ('Rendimientos calculados con las reglas del robot sobre la cuotaparte; "—" = historia insuficiente '
@@ -332,7 +345,7 @@ else:
         notas_pdf.append(nota)
         if not seguido:
             costos_pdf = calculos.costos_ficha(datos.foto_de_fondo(codigo))
-            st.dataframe(costos_pdf, hide_index=True, width="stretch")
+            mostrar_tabla(costos_pdf, hide_index=True, width="stretch")
         if revisar and seguido:
             st.warning("Diario, mes, año o 12 meses calculados distintos de los de la CAFCI en: " + ", ".join(revisar)
                        + ". Ver la pantalla \"Filas a revisar\".")
@@ -415,7 +428,7 @@ else:
     top_pdf = formato.tabla(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
         columns={"instrumento": "Instrumento", "pct_pn": "% del PN", "categoria_detallada": "Categoría"}),
         numeros={"% del PN": 2})
-    st.dataframe(top_pdf, hide_index=True, width="stretch")
+    mostrar_tabla(top_pdf, hide_index=True, width="stretch")
     with st.expander("Cartera completa"):
         mostrar_edicion_clasificacion(
             calculos.filtrar_por_rubros(cart, elegidos),
@@ -431,7 +444,7 @@ else:
     filtro = st.multiselect("Filtrar por tipo", tipos)
     if filtro:
         h = h[h["tipo"].isin(filtro)]
-    st.dataframe(formato.tabla(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
+    mostrar_tabla(formato.tabla(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
                                                  "link": "Documento"}), fechas=["Fecha"]),
                  hide_index=True, width="stretch",
                  column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})

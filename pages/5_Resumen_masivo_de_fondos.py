@@ -15,6 +15,18 @@ import informe  # noqa: E402
 import marca  # noqa: E402
 import rapidez  # noqa: E402
 
+def mostrar_tabla(tabla, **opciones):
+    if st.session_state.get("informe_vista", "Tabla") == "Tarjetas" and "on_select" not in opciones:
+        base = tabla.data if hasattr(tabla, "data") else tabla
+        columnas = tuple(str(c) for c in base.columns)
+        filas = tuple(tuple(formato.texto_o_guion(v) if not pd.isna(v) else formato.VACIO
+                            for v in fila) for fila in base.itertuples(index=False, name=None))
+        html = rapidez.memorizar("informe_tarjetas", lambda: formato.tarjetas_html(columnas, filas), columnas, filas)
+        st.markdown(html, unsafe_allow_html=True)
+    else:
+        st.dataframe(tabla, **opciones)
+
+
 st.set_page_config(page_title="Informe descriptivo", page_icon="📈", layout="wide")
 acceso.requerir()
 inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
@@ -30,6 +42,7 @@ elif st.session_state.get("informe_transferencia") != transferencia:
     st.session_state["informe_transferencia"] = list(transferencia)
     st.session_state["informe_modo"] = "Tomar fondos comparados"
     st.session_state["informe_filtro_0"] = "Todos"
+st.segmented_control("Vista", ["Tabla", "Tarjetas"], default="Tabla", key="informe_vista")
 modo = st.radio("Origen de los fondos", ["Tomar fondos comparados", "Búsqueda libre"],
                 index=1, key="informe_modo")
 todos = datos.fondos_ficha(incluir_no_seguidos=True)
@@ -72,7 +85,7 @@ columnas = calculos.columnas_resumen(tabla)
 porcentajes = [c for c in columnas if c not in ("Patrimonio neto",) and (
     c in {calculos.ETIQUETA_CATEGORIA.get(k, k) for k in calculos.CATEGORIAS_RESUMEN} or c == calculos.AJUSTE
     or c.startswith("% "))]
-st.dataframe(rapidez.memorizar("informe_tabla", lambda: formato.tabla(tabla[columnas],
+mostrar_tabla(rapidez.memorizar("informe_tabla", lambda: formato.tabla(tabla[columnas],
     fechas=["Cartera al"] if "Cartera al" in columnas else (),
     numeros={**{c: 2 for c in porcentajes}, "Patrimonio neto": 2}), seleccion),
     hide_index=True, width="stretch")
@@ -102,5 +115,5 @@ for sec in secs:
     filas = [{"Fondo": f["nombre"] + (f" (cartera al {f['fecha']})" if f["fecha"] else ""),
               "Principales rubros": "  \n".join(f["rubros"]) or formato.VACIO, "Idea y temática": f["idea"]}
              for f in fondos]
-    st.table(pd.DataFrame(filas).set_index("Fondo"))
+    mostrar_tabla(pd.DataFrame(filas), hide_index=True, width="stretch")
     st.caption(sec["descargo"])

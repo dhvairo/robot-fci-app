@@ -1,5 +1,6 @@
 """Hoja única de presentación; la entrada la inyecta una vez por ejecución."""
 import re
+from functools import lru_cache
 
 import marca
 
@@ -24,7 +25,7 @@ REGLAS = """
 [data-testid="stMetric"], [data-testid="stForm"], [data-testid="stExpander"],
 [data-testid="stVerticalBlockBorderWrapper"] > div {
     background: var(--fci-superficie); border: 1px solid var(--fci-borde_suave);
-    border-radius: 24px; box-shadow: 0 2px 6px rgba(80, 60, 40, 0.08);
+    border-radius: 24px; box-shadow: 0 2px 6px color-mix(in srgb, var(--fci-texto) 8%, transparent);
 }
 [data-testid="stMetric"] { padding: 14px 18px; height: 100%; }
 [data-testid="stMetricValue"] { font-size: 1.3rem; font-weight: 800; }
@@ -32,7 +33,7 @@ REGLAS = """
 [data-testid="stExpander"] summary { min-height: 44px; padding: 10px 18px; }
 [data-testid="stDataFrame"], [data-testid="stTable"] {
     border: 1px solid var(--fci-borde_suave); border-radius: 14px;
-    background: var(--fci-superficie); box-shadow: 0 2px 6px rgba(80, 60, 40, 0.08);
+    background: var(--fci-superficie); box-shadow: 0 2px 6px color-mix(in srgb, var(--fci-texto) 8%, transparent);
 }
 [data-testid="stTable"] table { border-collapse: collapse; width: 100%; }
 [data-testid="stTable"] th { color: var(--fci-tenue); font-weight: 700; background: var(--fci-fondo_suave); }
@@ -58,15 +59,63 @@ REGLAS = """
 }
 .stApp button:focus-visible, .stApp a:focus-visible, .stApp input:focus-visible,
 .stApp textarea:focus-visible { outline: 3px solid var(--fci-principal); outline-offset: 2px; }
+.stApp button, .stApp input, [data-baseweb="select"] > div { min-height: 44px; }
+[data-testid="stCheckbox"] label, [data-testid="stRadio"] label,
+[data-testid="stSidebarNav"] a, [data-testid="stToggle"] label { min-height: 44px; }
+[data-testid="stAlertContainer"] { border-radius: 14px; }
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {
+    background: var(--fci-ok_fondo); color: var(--fci-ok_texto); border: 1px solid var(--fci-ok);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {
+    background: var(--fci-revisar_fondo); color: var(--fci-revisar_texto); border: 1px solid var(--fci-revisar);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
+    background: var(--fci-peligro_fondo); color: var(--fci-peligro_texto); border: 1px solid var(--fci-peligro);
+}
+.fci-tarjetas { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.fci-tarjeta { background: var(--fci-superficie); border: 1px solid var(--fci-borde);
+    border-radius: 24px; padding: 18px; overflow-wrap: anywhere; min-width: 0;
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--fci-texto) 8%, transparent); }
+.fci-tarjeta h3 { color: var(--fci-principal); }
+.fci-tarjeta dl { margin: 0; }
+.fci-tarjeta dt { color: var(--fci-tenue); font-size: .85rem; }
+.fci-tarjeta dd { margin: 0 0 .6rem; white-space: pre-wrap; }
+@media (max-width: 1024px) {
+    .stMainBlockContainer { padding: 1.5rem; max-width: 100%; }
+    [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
+    [data-testid="stColumn"] { min-width: min(100%, 240px); }
+    .stApp h1 { font-size: 1.6rem; }
+}
 @media (max-width: 640px) {
     .stMainBlockContainer { padding: 1rem; }
     .stApp h1 { font-size: 1.4rem; }
+    .stApp h2 { font-size: 1.15rem; }
+    [data-testid="stHorizontalBlock"] { flex-direction: column; }
+    [data-testid="stColumn"] { width: 100% !important; flex: 1 1 100% !important; min-width: 0; }
+    [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button,
+    [data-testid="stDownloadButton"] button, [data-testid="stLinkButton"] a,
+    [data-baseweb="select"], [data-testid="stTextInput"] { width: 100%; }
+    [data-testid="stCheckbox"] label { width: 100%; }
+    [data-testid="stMain"], [data-testid="stVerticalBlock"] { min-width: 0; max-width: 100%; }
+    [data-testid="stTable"] { overflow-x: auto; }
+    [data-testid="stTabs"] [role="tablist"] { overflow-x: auto; }
+    .stApp h1, .stApp h2, .stApp h3 { overflow-wrap: anywhere; }
+    .fci-tarjetas { grid-template-columns: minmax(0, 1fr); }
 }
 """
 
 
+@lru_cache(maxsize=32)
+def _css_validado(items):
+    valores = dict(items)
+    return _construir_css(valores)
+
+
 def generar_css(config=None):
-    valores = marca.estilo_visual(config)
+    return _css_validado(tuple(marca.estilo_visual(config).items()))
+
+
+def _construir_css(valores):
     for clave in marca.ESTILO_BASE:
         valor = valores[clave]
         patron = r"[a-zA-Z0-9 ,'\-]+" if clave == "fuente" else r"#[0-9a-fA-F]{6}"

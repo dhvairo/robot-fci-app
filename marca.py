@@ -59,7 +59,10 @@ ESTILO_BASE = {
     "fondo": "#fbf6ef", "superficie": "#ffffff", "texto": "#2b2622",
     "tenue": "#6b5f52", "borde": "#e2d6c6", "borde_suave": "#efe8de",
     "fondo_suave": "#f6efe5", "principal": "#2457c5", "hover": "#173c8c",
-    "acento_suave": "#eef3fc", "sobre_acento": "#ffffff",
+    "acento_suave": "#e4ecfb", "sobre_acento": "#ffffff",
+    "ok": "#2f8a57", "ok_fondo": "#dcefe3", "ok_texto": "#1f6640",
+    "revisar": "#b5600f", "revisar_fondo": "#fbe6cf", "revisar_texto": "#8a4a0e",
+    "peligro": "#c2362b", "peligro_fondo": "#f7d9d5", "peligro_texto": "#9b2a20",
     "fuente": "Nunito, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 }
 ESTILOS_ORGANIZACION = {"propia": dict(ESTILO_BASE)}
