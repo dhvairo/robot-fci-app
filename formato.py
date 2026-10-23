@@ -145,6 +145,43 @@ def plotly_es(fig, fechas_x=False):
     return fig
 
 
+def grafico_barras_comparador(barras):
+    """Seis grupos visibles, con una línea vacía entre plazos y etiquetas acotadas."""
+    from html import escape
+    import plotly.graph_objects as go
+    from calculos import PLAZOS_COMPARADOR
+    posiciones, etiquetas, xs, ys, colores, detalles = [], [], [], [], [], []
+    fila = 0
+    for plazo, _ in PLAZOS_COMPARADOR:
+        posiciones.append(fila)
+        etiquetas.append('<b>' + plazo + '</b>')
+        fila += 1
+        grupo = barras[barras.Plazo.eq(plazo)]
+        if grupo.empty:
+            posiciones.append(fila)
+            etiquetas.append('Sin datos')
+            fila += 1
+        for dato in grupo.to_dict('records'):
+            posiciones.append(fila)
+            nombre = dato['Fondo']
+            etiquetas.append(escape(nombre if len(nombre) <= 23 else nombre[:22] + '…'))
+            xs.append(dato['Rendimiento %'])
+            ys.append(fila)
+            colores.append(dato['Color'])
+            detalles.append(escape(dato['Clase']) + ' · ' + plazo)
+            fila += 1
+        fila += 1
+    fig = go.Figure(go.Bar(x=xs, y=ys, orientation='h', marker_color=colores,
+                          customdata=detalles, text=[numero(x) + '%' for x in xs],
+                          textposition='auto', hovertemplate='%{customdata}<br>%{x:.2f}%<extra></extra>'))
+    fig.update_layout(height=max(600, fila * 27), showlegend=False,
+                      margin=dict(l=0, r=15, t=10, b=35),
+                      xaxis_title='Rendimiento %',
+                      yaxis=dict(tickmode='array', tickvals=posiciones, ticktext=etiquetas,
+                                 range=[fila - 1, -1], fixedrange=True))
+    return plotly_es(fig)
+
+
 def filas_a_tarjetas(filas):
     """Filas ordenadas -> título y pares etiqueta/valor; no modifica el origen."""
     import pandas as pd

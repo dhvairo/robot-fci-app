@@ -6,6 +6,8 @@ import marca
 
 
 REGLAS = """
+.st-key-comparador_busqueda [data-baseweb="tag"] { display: none; }
+.st-key-comparador_fila_clases [data-testid="stCheckbox"] { flex: 0 0 auto; }
 .stApp { background: var(--fci-fondo); color: var(--fci-texto); }
 [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background: var(--fci-fondo); }
 .stApp, .stApp input, .stApp textarea, .stApp button,

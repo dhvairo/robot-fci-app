@@ -491,6 +491,67 @@ def alternar_serie(sesion, codigo):
     estado["visible"] = not estado["visible"]
 
 
+def controles_fondos_comparador(sesion, clases):
+    """Un encendido y color por fondo; las clases conservan su identidad CAFCI."""
+    import marca
+    memoria = sesion.setdefault('comparador_fondos_series', {})
+    paleta = marca.paleta()
+    for codigo in sorted(set(int(c) for c in clases.codigo_cnv)):
+        memoria.setdefault(codigo, {'color': paleta[len(memoria) % len(paleta)], 'visible': True})
+    controles = controles_series(sesion, clases)
+    fondo_de = clases.set_index('codigo_cafci').codigo_cnv.to_dict()
+    for c in controles:
+        c.update(memoria[int(fondo_de[c['codigo']])])
+        sesion['comparador_series'][c['codigo']].update(color=c['color'], visible=c['visible'])
+    return controles
+
+
+def alternar_fondo_comparador(sesion, codigo):
+    estado = sesion['comparador_fondos_series'][codigo]
+    estado['visible'] = not estado['visible']
+
+
+def quitar_fondo_comparador(sesion, codigo):
+    actuales = sesion.get('comparador_fondos', sesion.get('comparador_fondos_memoria', []))
+    sesion['comparador_fondos'] = [c for c in actuales if c != codigo]
+    sesion['comparador_fondos_memoria'] = list(sesion['comparador_fondos'])
+
+
+PLAZOS_COMPARADOR = (('7 días', 7), ('30 días', 30), ('60 días', 60),
+                     ('90 días', 90), ('6 meses', 182), ('1 año', 365))
+
+
+def barras_comparador(serie, clases, controles):
+    """Una barra por fondo/plazo, usando la primera clase seleccionada, sin promediar.
+
+    Reutiliza base_100; exige dos valores y cobertura del plazo con la tolerancia
+    habitual. No convierte una historia corta en rendimiento de un año.
+    """
+    columnas = ['Plazo', 'codigo_cnv', 'Fondo', 'Clase', 'Color', 'Rendimiento %']
+    if serie.empty or clases.empty:
+        return pd.DataFrame(columns=columnas)
+    visibles = {c['codigo']: c for c in controles if c['visible']}
+    representantes = clases.drop_duplicates('codigo_cnv')
+    representantes = representantes[representantes.codigo_cafci.isin(visibles)]
+    hasta = serie.fecha.max()
+    filas = []
+    for plazo, dias in PLAZOS_COMPARADOR:
+        desde = hasta - timedelta(days=dias)
+        normalizada = base_100(serie[serie.codigo_cafci.isin(representantes.codigo_cafci)], desde, hasta)
+        grupo = []
+        for c in representantes.itertuples():
+            valores = normalizada[normalizada.codigo_cafci.eq(c.codigo_cafci)].dropna(subset=['base 100'])
+            if (len(valores) < 2 or valores.fecha.min() > desde + timedelta(days=TOLERANCIA_DIAS)
+                    or valores.fecha.max() < hasta - timedelta(days=TOLERANCIA_DIAS)):
+                continue
+            grupo.append({'Plazo': plazo, 'codigo_cnv': int(c.codigo_cnv),
+                          'Fondo': c.etiqueta.rsplit(' — ', 1)[0], 'Clase': c.etiqueta,
+                          'Color': visibles[c.codigo_cafci]['color'],
+                          'Rendimiento %': float(valores['base 100'].iloc[-1] - 100)})
+        filas.extend(sorted(grupo, key=lambda f: (-f['Rendimiento %'], f['codigo_cnv'])))
+    return pd.DataFrame(filas, columns=columnas)
+
+
 def comparar(serie, desde, hasta, modo, controles=None):
     """Datos comunes a pantalla y PDF: R base 100, P en moneda de cada clase."""
     import plotly.express as px

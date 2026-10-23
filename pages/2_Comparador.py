@@ -35,11 +35,12 @@ if base.empty:
     st.info("No hay fondos para estos filtros.")
     st.stop()
 nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
-with st.expander("Fondos", expanded=False):
-    elegidos = filtros.lista_fondos("Fondos", nombres, "comparador_fondos", vacio_todos=False)
+desplegable_fondos = st.expander("Fondos", expanded=False)
+with desplegable_fondos:
+    with st.container(key='comparador_busqueda'):
+        elegidos = filtros.lista_fondos("Fondos", nombres, "comparador_fondos", vacio_todos=False)
 if not elegidos:
-    with st.expander("Clase", expanded=False):
-        st.info("Seleccioná fondos para ver sus clases.")
+    st.info("Seleccioná fondos para ver sus clases.")
     st.info("Elegí al menos un fondo.")
     st.stop()
 fondos = base[base.codigo_cnv.isin(elegidos)]
@@ -47,19 +48,54 @@ monedas = tuple(st.session_state['comparador_filtro_1'])
 clases = rapidez.memorizar('comparador_catalogo_clases',
     lambda: calculos.clases_comparador(fondos, list(monedas), datos.clases_de_fondo),
     tuple(fondos.codigo_cnv), monedas)
+controles_catalogo = calculos.controles_fondos_comparador(st.session_state, clases)
+with desplegable_fondos:
+    for fondo in fondos.itertuples():
+        codigos = set(clases.loc[clases.codigo_cnv.eq(fondo.codigo_cnv), 'codigo_cafci'])
+        controles_fondo = [c for c in controles_catalogo if c['codigo'] in codigos]
+        with st.container(horizontal=True, vertical_alignment='center'):
+            st.button('×', key=f'comparador_quitar_{fondo.codigo_cnv}',
+                      help=f'Quitar {fondo.nombre}', on_click=calculos.quitar_fondo_comparador,
+                      args=(st.session_state, int(fondo.codigo_cnv)))
+            if controles_fondo:
+                control = controles_fondo[0]
+                st.button(fondo.nombre, key=f"comparador_serie_{control['codigo']}",
+                          help='Apagar o encender este fondo en los gráficos, la tabla y el PDF',
+                          on_click=calculos.alternar_fondo_comparador,
+                          args=(st.session_state, int(fondo.codigo_cnv)))
+            else:
+                st.caption(fondo.nombre + ' · sin clases disponibles')
 if clases.empty:
     st.info("No hay clases disponibles para estos fondos y moneda.")
     st.stop()
 preferidas = []
 for _, grupo in clases.groupby("codigo_cnv"):
     preferidas += datos.clases_preferidas(grupo).codigo_cafci.tolist()
-etiquetas = clases.set_index("codigo_cafci").etiqueta.to_dict()
 fondo_de = clases.set_index("codigo_cafci").codigo_cnv.to_dict()
-with st.expander("Clase", expanded=False):
-    elegidas = filtros.casillas("Clase", clases.codigo_cafci.tolist(), "comparador_clases",
-                               todas="Todas", formato=etiquetas.get, preferidas=preferidas, persistente=True,
-                               al_desmarcar=lambda c, mem: filtros.quitar_fondo_sin_clases(
-                                   st.session_state, c, mem, fondo_de, set(preferidas)))
+memoria_clases = st.session_state.setdefault('comparador_clases_memoria', {})
+for codigo in clases.codigo_cafci:
+    memoria_clases.setdefault(codigo, codigo in preferidas)
+
+def guardar_clase(codigo):
+    memoria_clases[codigo] = st.session_state.get(f'comparador_clases_casilla_{codigo}', False)
+    if not memoria_clases[codigo]:
+        filtros.quitar_fondo_sin_clases(st.session_state, codigo, memoria_clases, fondo_de, set(preferidas))
+
+def marcar_clases():
+    for codigo in clases.codigo_cafci:
+        memoria_clases[codigo] = st.session_state.get('comparador_clases_todas', False)
+
+st.markdown('**Clase**')
+with st.container(horizontal=True, key='comparador_fila_clases'):
+    st.session_state['comparador_clases_todas'] = all(memoria_clases[c] for c in clases.codigo_cafci)
+    st.checkbox('Todas', key='comparador_clases_todas', on_change=marcar_clases, width='content')
+    for clase in clases.itertuples():
+        llave = f'comparador_clases_casilla_{clase.codigo_cafci}'
+        st.session_state[llave] = memoria_clases[clase.codigo_cafci]
+        st.checkbox(clase.nombre.split(' - ')[-1].removeprefix('Clase '), key=llave,
+                    help=clase.etiqueta + ' · ' + clase.moneda, width='content',
+                    on_change=guardar_clase, args=(clase.codigo_cafci,))
+elegidas = [c for c in clases.codigo_cafci if memoria_clases[c]]
 if not elegidas:
     st.info("Elegí al menos una clase.")
     st.stop()
@@ -96,28 +132,11 @@ if (~fondos.seguido).any():
     notas.insert(0, consulta_puntual.LEYENDA)
 graficos = []
 serie_pdf = ser
-controles = calculos.controles_series(st.session_state, sel)
-opciones_series = {c['codigo']: c['corto'] for c in controles}
-st.session_state.pop('comparador_series_elegidas', None)    # clave del multiselect de U103
-anteriores = st.session_state.get('comparador_series_pills')
-if not isinstance(anteriores, list):
-    st.session_state.pop('comparador_series_pills', None)
-    anteriores = None
-else:
-    nuevas = set(opciones_series) - set(st.session_state.get('comparador_series_disponibles', []))
-    st.session_state['comparador_series_pills'] = [c for c in opciones_series if c in anteriores or c in nuevas]
-series_elegidas = st.pills('Series en el gráfico', list(opciones_series), selection_mode='multi',
-    default=list(opciones_series) if anteriores is None else None,
-    format_func=opciones_series.get, key='comparador_series_pills',
-    help='Tocá una serie para sacarla o volver a ponerla en el gráfico, la tabla y el PDF. '
-         + ' | '.join(c['nombre'] for c in controles)) or []
-st.session_state['comparador_series_disponibles'] = list(opciones_series)
-for c in controles:
-    c['visible'] = c['codigo'] in series_elegidas
-    st.session_state['comparador_series'][c['codigo']]['visible'] = c['visible']
+controles = calculos.controles_fondos_comparador(st.session_state, sel)
 visibles = sel[sel.codigo_cafci.isin([c["codigo"] for c in controles if c["visible"]])]
 serie_pdf = ser[ser.codigo_cafci.isin(visibles.codigo_cafci)] if not ser.empty else ser
 mostrar = visibles[["etiqueta", "moneda"]].rename(columns={"etiqueta": "Clase", "moneda": "Moneda"})
+barras_lugar = st.container()
 if ser.empty:
     notas.append("Sin historia disponible para esta selección.")
 else:
@@ -160,10 +179,29 @@ if modo in ("P", "R y P") and (ser.empty or ser.patrimonio.isna().any()):
     notas.append("Patrimonio no disponible en algunas fechas o clases; los huecos no se interpolan.")
 for nota in notas:
     st.warning(nota)
+with barras_lugar:
+    if visibles.empty:
+        st.info('Encendé algún fondo para ver los rendimientos por plazo.')
+    else:
+        barras = rapidez.memorizar('comparador_barras',
+            lambda: calculos.barras_comparador(ser, sel, controles), *seleccion,
+            tuple((c['codigo'], c['visible']) for c in controles), bool(fondos.seguido.all()))
+        st.caption('Rendimiento por plazo · una barra por fondo, con su primera clase seleccionada. '
+                   'El detalle de la clase se muestra al tocar la barra.')
+        figura_barras = rapidez.memorizar('comparador_barras_figura',
+            lambda: formato.grafico_barras_comparador(barras), *seleccion,
+            tuple((c['codigo'], c['visible']) for c in controles), bool(fondos.seguido.all()))
+        rapidez.grafico_memorizado('comparador_barras_grafico', figura_barras,
+            *seleccion, tuple((c['codigo'], c['visible']) for c in controles), bool(fondos.seguido.all()))
+
 tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta", "Fecha del patrimonio") if c in mostrar],
                       enteros=[c for c in ("Datos", "Último valor de patrimonio") if c in mostrar],
                       numeros={"Rendimiento %": 2} if "Rendimiento %" in mostrar else {})
-st.dataframe(tabla, hide_index=True, width="stretch")
+st.dataframe(formato.tabla_ordenable(mostrar,
+    fechas=[c for c in ('Desde', 'Hasta', 'Fecha del patrimonio') if c in mostrar],
+    enteros=[c for c in ('Datos', 'Último valor de patrimonio') if c in mostrar],
+    numeros={'Rendimiento %': 2} if 'Rendimiento %' in mostrar else {}),
+    hide_index=True, width="stretch")
 rapidez.pdf_a_pedido(
     "comparador", (*seleccion, modo, str(desde), str(hasta), tuple((c["codigo"], c["visible"]) for c in controles),
                    tuple(notas)),
