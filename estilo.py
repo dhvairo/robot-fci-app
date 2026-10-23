@@ -6,7 +6,8 @@ import marca
 
 
 REGLAS = """
-.st-key-comparador_busqueda [data-baseweb="tag"] { display: none; }
+.st-key-comparador_busqueda [data-baseweb="tag"],
+.st-key-comparador_busqueda [data-tag] { display: none; }
 .st-key-comparador_fila_clases [data-testid="stCheckbox"] { flex: 0 0 auto; }
 .stApp { background: var(--fci-fondo); color: var(--fci-texto); }
 [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background: var(--fci-fondo); }
@@ -104,6 +105,16 @@ REGLAS = """
     .stApp h1, .stApp h2, .stApp h3 { overflow-wrap: anywhere; }
     .fci-tarjetas { grid-template-columns: minmax(0, 1fr); }
 }
+/* Controles compactos del Comparador: conservan la fila también a 640 px. */
+.st-key-comparador_botones,
+.st-key-comparador_botones [data-testid="stHorizontalBlock"],
+.st-key-comparador_fila_clases {
+    flex-direction: row; flex-wrap: wrap; gap: 0.35rem;
+}
+.st-key-comparador_botones [data-testid="stButton"] button {
+    min-height: 32px; padding: 0.2rem 0.5rem; font-size: 0.8rem; width: auto;
+}
+
 """
 
 
@@ -127,11 +138,11 @@ def _construir_css(valores):
     return ":root {\n" + variables + "\n}\n" + REGLAS
 
 
-def regla_boton_serie(codigo, color, visible):
+def regla_boton_serie(codigo, color, visible, sin_clase=False):
     """Conserva el indicador visual encendido/apagado del Comparador."""
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         raise ValueError("Color de serie inválido.")
-    return (f".st-key-comparador_serie_{int(codigo)} button {{"
+    return (f".st-key-comparador_serie_{'fondo_' if sin_clase else ''}{int(codigo)} button {{"
             f"border: 2px solid {color}; color: {color};"
             f"opacity: {1 if visible else 0.5};"
             f"text-decoration: {'none' if visible else 'line-through'};"
@@ -144,6 +155,8 @@ def inyectar(contenedor):
     series = st.session_state.get("comparador_series", {})
     reglas = "\n".join(regla_boton_serie(codigo, control["color"], control["visible"])
                        for codigo, control in series.items())
+    reglas += "\n" + "\n".join(regla_boton_serie(codigo, control["color"], control["visible"], sin_clase=True)
+                               for codigo, control in st.session_state.get('comparador_fondos_series', {}).items())
     contenedor.markdown("<style>" + generar_css() + reglas + "</style>", unsafe_allow_html=True)
 
 

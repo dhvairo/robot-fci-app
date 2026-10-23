@@ -443,6 +443,18 @@ def clases_comparador(fondos, moneda, leer_clases):
     return pd.concat(partes, ignore_index=True)
 
 
+def agrupar_clases_comparador(clases):
+    """Nombre de clase existente, sin prefijo del fondo; homónimas se agrupan."""
+    return clases.nombre.str.split(' - ').str[-1].str.replace(r'^Clase\s+', '', regex=True).str.strip()
+
+
+def proponer_fondos_comparador(fondos, clases, elegidas):
+    if not elegidas:
+        return fondos
+    return fondos[fondos.codigo_cnv.isin(clases.loc[
+        agrupar_clases_comparador(clases).isin(elegidas), 'codigo_cnv'])]
+
+
 def historia_comparador(fondos, clases, leer_serie, cargar_puntual):
     """Fuentes inyectables; un fondo sin historia no interrumpe a los demás."""
     partes, avisos = [], []
@@ -491,12 +503,12 @@ def alternar_serie(sesion, codigo):
     estado["visible"] = not estado["visible"]
 
 
-def controles_fondos_comparador(sesion, clases):
+def controles_fondos_comparador(sesion, clases, fondos=()):
     """Un encendido y color por fondo; las clases conservan su identidad CAFCI."""
     import marca
     memoria = sesion.setdefault('comparador_fondos_series', {})
     paleta = marca.paleta()
-    for codigo in sorted(set(int(c) for c in clases.codigo_cnv)):
+    for codigo in sorted(set(int(c) for c in [*clases.codigo_cnv, *fondos])):
         memoria.setdefault(codigo, {'color': paleta[len(memoria) % len(paleta)], 'visible': True})
     controles = controles_series(sesion, clases)
     fondo_de = clases.set_index('codigo_cafci').codigo_cnv.to_dict()
@@ -521,34 +533,45 @@ PLAZOS_COMPARADOR = (('7 días', 7), ('30 días', 30), ('60 días', 60),
                      ('90 días', 90), ('6 meses', 182), ('1 año', 365))
 
 
-def barras_comparador(serie, clases, controles):
-    """Una barra por fondo/plazo, usando la primera clase seleccionada, sin promediar.
+def barras_comparador(serie, clases, controles, modo="R", hasta=None):
+    """Primera clase por fondo: rendimiento o promedio simple de patrimonios diarios.
 
     Reutiliza base_100; exige dos valores y cobertura del plazo con la tolerancia
     habitual. No convierte una historia corta en rendimiento de un año.
     """
-    columnas = ['Plazo', 'codigo_cnv', 'Fondo', 'Clase', 'Color', 'Rendimiento %']
+    campo = 'Patrimonio promedio' if modo == 'P' else 'Rendimiento %'
+    columnas = ['Plazo', 'codigo_cnv', 'Fondo', 'Clase', 'Color', 'Moneda', campo]
     if serie.empty or clases.empty:
         return pd.DataFrame(columns=columnas)
     visibles = {c['codigo']: c for c in controles if c['visible']}
     representantes = clases.drop_duplicates('codigo_cnv')
     representantes = representantes[representantes.codigo_cafci.isin(visibles)]
-    hasta = serie.fecha.max()
+    hasta = hasta or serie.fecha.max()
     filas = []
     for plazo, dias in PLAZOS_COMPARADOR:
         desde = hasta - timedelta(days=dias)
-        normalizada = base_100(serie[serie.codigo_cafci.isin(representantes.codigo_cafci)], desde, hasta)
+        normalizada = (base_100(serie[serie.codigo_cafci.isin(representantes.codigo_cafci)], desde, hasta)
+                       if modo == "R" else None)
         grupo = []
         for c in representantes.itertuples():
-            valores = normalizada[normalizada.codigo_cafci.eq(c.codigo_cafci)].dropna(subset=['base 100'])
-            if (len(valores) < 2 or valores.fecha.min() > desde + timedelta(days=TOLERANCIA_DIAS)
-                    or valores.fecha.max() < hasta - timedelta(days=TOLERANCIA_DIAS)):
-                continue
+            if modo == 'P':
+                valores = serie.loc[serie.codigo_cafci.eq(c.codigo_cafci)
+                    & serie.fecha.between(desde, hasta)].dropna(subset=['patrimonio'])
+                if valores.empty:
+                    continue
+                # Una observación por día; los nulos nunca suman ni cuentan.
+                valor = float(valores.drop_duplicates('fecha').patrimonio.mean())
+            else:
+                valores = normalizada[normalizada.codigo_cafci.eq(c.codigo_cafci)].dropna(subset=['base 100'])
+                if (len(valores) < 2 or valores.fecha.min() > desde + timedelta(days=TOLERANCIA_DIAS)
+                        or valores.fecha.max() < hasta - timedelta(days=TOLERANCIA_DIAS)):
+                    continue
+                valor = float(valores['base 100'].iloc[-1] - 100)
             grupo.append({'Plazo': plazo, 'codigo_cnv': int(c.codigo_cnv),
                           'Fondo': c.etiqueta.rsplit(' — ', 1)[0], 'Clase': c.etiqueta,
-                          'Color': visibles[c.codigo_cafci]['color'],
-                          'Rendimiento %': float(valores['base 100'].iloc[-1] - 100)})
-        filas.extend(sorted(grupo, key=lambda f: (-f['Rendimiento %'], f['codigo_cnv'])))
+                          'Color': visibles[c.codigo_cafci]['color'], 'Moneda': c.moneda,
+                          campo: valor})
+        filas.extend(sorted(grupo, key=lambda f: (-f[campo], f['codigo_cnv'])))
     return pd.DataFrame(filas, columns=columnas)
 
 

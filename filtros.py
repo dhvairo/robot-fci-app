@@ -115,15 +115,17 @@ def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", per
     return aplicar(fondos, *elegidas)
 
 
-def lista_fondos(etiqueta, nombres, clave, defecto=(), vacio_todos=True):
+def lista_fondos(etiqueta, nombres, clave, defecto=(), vacio_todos=True, mostrar_etiquetas=True):
     """Búsqueda nativa y selección con ×; memoria independiente de la vida del widget."""
     import streamlit as st
     opciones = sorted(nombres, key=lambda c: (nombres[c].casefold(), str(c)))
     memoria = clave + '_memoria'
     anterior = st.session_state.get(clave, st.session_state.get(memoria, list(defecto)))
     st.session_state[clave] = [c for c in anterior if c in nombres] if isinstance(anterior, list) else []
-    elegidos = st.multiselect(etiqueta, opciones, key=clave, format_func=nombres.get,
-                             placeholder="Todos · escribí para buscar" if vacio_todos else "Escribí para buscar fondos")
+    # El contenedor activa el CSS existente solo para el Comparador.
+    with st.container(key=None if mostrar_etiquetas else 'comparador_busqueda'):
+        elegidos = st.multiselect(etiqueta, opciones, key=clave, format_func=nombres.get,
+                                 placeholder="Todos · escribí para buscar" if vacio_todos else "Escribí para buscar fondos")
     st.session_state[memoria] = list(elegidos)
     return (elegidos or opciones) if vacio_todos else elegidos
 

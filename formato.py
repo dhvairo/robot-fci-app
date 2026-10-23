@@ -145,12 +145,14 @@ def plotly_es(fig, fechas_x=False):
     return fig
 
 
-def grafico_barras_comparador(barras):
+def grafico_barras_comparador(barras, modo="R"):
     """Seis grupos visibles, con una línea vacía entre plazos y etiquetas acotadas."""
     from html import escape
     import plotly.graph_objects as go
     from calculos import PLAZOS_COMPARADOR
-    posiciones, etiquetas, xs, ys, colores, detalles = [], [], [], [], [], []
+    campo = "Patrimonio promedio" if modo == "P" else "Rendimiento %"
+    titulo = "Patrimonio promedio por plazo" if modo == "P" else "Rendimiento por plazo"
+    posiciones, etiquetas, xs, ys, colores, detalles, textos = [], [], [], [], [], [], []
     fila = 0
     for plazo, _ in PLAZOS_COMPARADOR:
         posiciones.append(fila)
@@ -165,18 +167,21 @@ def grafico_barras_comparador(barras):
             posiciones.append(fila)
             nombre = dato['Fondo']
             etiquetas.append(escape(nombre if len(nombre) <= 23 else nombre[:22] + '…'))
-            xs.append(dato['Rendimiento %'])
+            xs.append(dato[campo])
             ys.append(fila)
             colores.append(dato['Color'])
-            detalles.append(escape(dato['Clase']) + ' · ' + plazo)
+            unidad = dato['Moneda'] if modo == 'P' else '%'
+            textos.append(numero(dato[campo]) + ' ' + unidad)
+            detalles.append(escape(dato['Clase']) + ' · ' + plazo + ' · ' + textos[-1])
             fila += 1
         fila += 1
     fig = go.Figure(go.Bar(x=xs, y=ys, orientation='h', marker_color=colores,
-                          customdata=detalles, text=[numero(x) + '%' for x in xs],
-                          textposition='auto', hovertemplate='%{customdata}<br>%{x:.2f}%<extra></extra>'))
+                          customdata=detalles, text=textos,
+                          textposition='auto', hovertemplate='%{customdata}<extra></extra>'))
     fig.update_layout(height=max(600, fila * 27), showlegend=False,
-                      margin=dict(l=0, r=15, t=10, b=35),
-                      xaxis_title='Rendimiento %',
+                      title=titulo + (' · monto en moneda de cada clase' if modo == 'P' else ' · %'),
+                      margin=dict(l=0, r=15, t=60, b=35),
+                      xaxis_title='Patrimonio promedio (moneda de cada clase)' if modo == 'P' else 'Rendimiento %',
                       yaxis=dict(tickmode='array', tickvals=posiciones, ticktext=etiquetas,
                                  range=[fila - 1, -1], fixedrange=True))
     return plotly_es(fig)
