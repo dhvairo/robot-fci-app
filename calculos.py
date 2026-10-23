@@ -438,14 +438,25 @@ def clases_comparador(fondos, moneda, leer_clases):
     for f in fondos.to_dict('records'):
         cl = filtrar_moneda(leer_clases(int(f['codigo_cnv'])), moneda).copy()
         cl['codigo_cnv'] = int(f['codigo_cnv'])
+        cl['nombre_fondo'] = f['nombre']
         cl['etiqueta'] = f['nombre'] + ' — ' + cl['nombre'].str.split(' - ').str[-1]
         partes.append(cl)
     return pd.concat(partes, ignore_index=True)
 
 
 def agrupar_clases_comparador(clases):
-    """Nombre de clase existente, sin prefijo del fondo; homónimas se agrupan."""
-    return clases.nombre.str.split(' - ').str[-1].str.replace(r'^Clase\s+', '', regex=True).str.strip()
+    """Primer token alfanumérico tras «Clase», completo y en mayúsculas.
+
+    «Clase A Plus» → A; «Clase B1» → B1. Sin esa marca: «Sin clase».
+    Prioridad: nombre/descripción de la clase, luego nombre del fondo.
+    """
+    grupos = pd.Series(pd.NA, index=clases.index, dtype='string')
+    for campo in ('nombre', 'descripcion', 'clase', 'nombre_fondo', 'fondo'):
+        if campo in clases:
+            token = clases[campo].astype('string').str.extract(
+                r'(?i)\bclase\s+([^\W_]+)', expand=False).str.upper()
+            grupos = grupos.fillna(token)
+    return grupos.fillna('Sin clase')
 
 
 def proponer_fondos_comparador(fondos, clases, elegidas):

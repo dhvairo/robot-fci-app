@@ -32,8 +32,15 @@ if todos.empty:
     st.stop()
 catalogo_clases = rapidez.memorizar('comparador_catalogo_clases',
     lambda: calculos.clases_comparador(todos, [], datos.clases_de_fondo), tuple(todos.codigo_cnv))
-nombres_clases = sorted(calculos.agrupar_clases_comparador(catalogo_clases).dropna().unique())
+nombres_clases = sorted(calculos.agrupar_clases_comparador(catalogo_clases).unique(),
+                        key=lambda n: (n == 'Sin clase', n))
 memoria_clases = st.session_state.setdefault('comparador_clases_memoria', {})
+for nombre in list(memoria_clases):
+    if nombre not in nombres_clases:
+        memoria_clases.pop(nombre)
+for llave in list(st.session_state):
+    if llave.startswith('comparador_clases_casilla_') and llave.removeprefix('comparador_clases_casilla_') not in nombres_clases:
+        st.session_state.pop(llave)
 for nombre in nombres_clases:
     memoria_clases.setdefault(nombre, False)
 
@@ -57,6 +64,8 @@ base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inic
 monedas = list(st.session_state['comparador_filtro_1'])
 clases = calculos.filtrar_moneda(catalogo_clases, monedas)
 base = calculos.proponer_fondos_comparador(base, clases, elegidas)
+if elegidas:
+    clases = clases[calculos.agrupar_clases_comparador(clases).isin(elegidas)]
 nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
 with st.expander("Fondos", expanded=False):
     elegidos = filtros.lista_fondos("Fondos", nombres, "comparador_fondos", vacio_todos=False,
@@ -85,7 +94,7 @@ if not elegidos:
 if clases.empty:
     st.info("No hay clases disponibles para estos fondos y moneda.")
     st.stop()
-sel = clases[calculos.agrupar_clases_comparador(clases).isin(elegidas)] if elegidas else clases
+sel = clases
 if len(sel) > 30:
     st.warning("Se muestran las primeras 30 clases como máximo. Afiná la selección para elegir otras.")
     sel = sel.iloc[:30]
