@@ -19,7 +19,15 @@ st.title("Gestión y eficiencia")
 st.caption("Todos los fondos del catálogo de la CAFCI. Los datos son los de la última planilla diaria; "
            "el rendimiento a 12 meses ya es neto de honorarios y gastos.")
 
+transferencia = calculos.recibir_en_gestion(st.session_state)
+modo = st.radio('Origen de los fondos', ['Tomar fondos comparados', 'Búsqueda libre'],
+                index=1, key='gestion_modo')
 catalogo_completo = datos.fondos_ficha(incluir_no_seguidos=True)
+if modo == 'Tomar fondos comparados':
+    if not transferencia:
+        st.info('No hay selección del Comparador. Elegí fondos allí o usá Búsqueda libre.')
+        st.stop()
+    catalogo_completo = catalogo_completo[catalogo_completo.codigo_cnv.isin(transferencia)]
 todas = datos.clases_gestion(catalogo_completo.attrs.get('clasificacion'))
 if todas.empty:
     st.info("Todavía no hay datos de clases.")

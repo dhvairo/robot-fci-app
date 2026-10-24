@@ -926,6 +926,8 @@ def _limpiar_comunes():
         _CONSULTAS_COMUNES.clear()
         _VERSION_COMUN, _VERSION_CARGA, _SELLO_COMUN = 0, 0, None
         _consultar_comun.clear()
+        _serie_comun.clear()
+        _indice_clases_comunes.clear()
 
 
 def consultar(sql, params=None):
@@ -1038,8 +1040,18 @@ def _clases_vigentes_comunes():
 
 
 def clases_de_fondo(codigo_cnv):
+    grupos = _indice_clases_comunes(version_comun())
+    clases = grupos.get(str(codigo_cnv))
+    return clases.copy() if clases is not None else pd.DataFrame(columns=['codigo_cafci', 'nombre', 'moneda'])
+
+
+@st.cache_resource(max_entries=4, show_spinner=False)
+def _indice_clases_comunes(version):
     todas = _clases_vigentes_comunes()
-    return todas[todas['codigo_cnv'].astype(str) == str(codigo_cnv)][['codigo_cafci', 'nombre', 'moneda']].reset_index(drop=True)
+    if todas.empty:
+        return {}
+    return {str(c): g[['codigo_cafci', 'nombre', 'moneda']].reset_index(drop=True)
+            for c, g in todas.groupby('codigo_cnv')}
 
 
 def foto_de_fondo(codigo_cnv):
@@ -1069,25 +1081,22 @@ def clases_preferidas(df_clases):
     return ab if len(ab) else df_clases
 
 
+@st.cache_resource(max_entries=4, show_spinner=False)
+def _serie_comun(version, _fallo=None):
+    """Fuente única de series y barras R/P de todos los fondos, por versión pública."""
+    if _fallo is not None:
+        _fallo.append(True)
+    return consultar('select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima order by fecha')
+
+
 def serie(codigos_cafci):
-    """Una lectura por lote de faltantes; cada clase se reutiliza en la sesión."""
-    import rapidez
-    codigos = list(dict.fromkeys(int(c) for c in codigos_cafci))
-    memoria = rapidez.memorizar('historia_por_clase', dict)
-    faltantes = [c for c in codigos if c not in memoria]
-    if faltantes:
-        lote = consultar("select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima "
-                         "where codigo_cafci = any(%s) order by fecha", (faltantes,))
-        grupos = dict(tuple(lote.groupby('codigo_cafci')))
-        for codigo in faltantes:
-            memoria[codigo] = grupos.get(codigo, lote.iloc[:0])
-        for codigo in list(memoria):
-            if len(memoria) <= 120:
-                break
-            if codigo not in codigos:
-                del memoria[codigo]
-    return pd.concat([memoria[c] for c in codigos], ignore_index=True) if codigos else pd.DataFrame(
-        columns=['codigo_cafci', 'fecha', 'cuotaparte', 'patrimonio'])
+    """La selección solo filtra pandas; nunca participa en la clave SQL común."""
+    import acceso
+    inicio, fallo = time.perf_counter(), []
+    todas = _serie_comun(version_comun(), fallo)
+    acceso.registrar_cache('SERIE_COMUN', not fallo, (time.perf_counter() - inicio) * 1000)
+    with calculos.medir_seguimiento('SERIE_FILTRAR'):
+        return todas[todas.codigo_cafci.isin(list(codigos_cafci))].copy()
 
 
 def rendimientos_ultimos(codigos_cafci):

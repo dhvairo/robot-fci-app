@@ -1,4 +1,4 @@
-"""Comparador: filtros comunes, selección por casillas, R/P y PDF."""
+"""Comparador: filtros comunes, selección múltiple, R/P y PDF."""
 from datetime import timedelta
 
 import pandas as pd
@@ -24,6 +24,9 @@ st.title("Comparador")
 if not st.session_state.get('comparador_llevar', st.session_state.get('comparador_llevar_memoria', False)):
     st.session_state.pop(calculos.SELECCION_INFORME, None)
 
+if not st.session_state.get('comparador_llevar_gestion', st.session_state.get('comparador_llevar_gestion_memoria', False)):
+    st.session_state.pop(calculos.SELECCION_GESTION, None)
+
 st.button("Restablecer", on_click=filtros.restablecer_comparador, args=(st.session_state,))
 
 todos = datos.fondos_ficha(incluir_no_seguidos=True)
@@ -31,35 +34,17 @@ if todos.empty:
     st.info("No hay fondos en el catálogo.")
     st.stop()
 catalogo_clases = rapidez.memorizar('comparador_catalogo_clases',
-    lambda: calculos.clases_comparador(todos, [], datos.clases_de_fondo), tuple(todos.codigo_cnv))
+    lambda: calculos.clases_comparador(todos, [], datos.clases_de_fondo))
 nombres_clases = sorted(calculos.agrupar_clases_comparador(catalogo_clases).unique(),
                         key=lambda n: (n == 'Sin clase', n))
-memoria_clases = st.session_state.setdefault('comparador_clases_memoria', {})
-for nombre in list(memoria_clases):
-    if nombre not in nombres_clases:
-        memoria_clases.pop(nombre)
 for llave in list(st.session_state):
-    if llave.startswith('comparador_clases_casilla_') and llave.removeprefix('comparador_clases_casilla_') not in nombres_clases:
+    if llave.startswith('comparador_clases_casilla_') or llave == 'comparador_clases_todas':
         st.session_state.pop(llave)
-for nombre in nombres_clases:
-    memoria_clases.setdefault(nombre, False)
-
-def guardar_clase(nombre):
-    memoria_clases[nombre] = st.session_state.get(f'comparador_clases_casilla_{nombre}', False)
-
-def marcar_clases():
-    for nombre in nombres_clases:
-        memoria_clases[nombre] = st.session_state.get('comparador_clases_todas', False)
-
-st.markdown('**Clase**')
-with st.container(horizontal=True, key='comparador_fila_clases'):
-    st.session_state['comparador_clases_todas'] = bool(nombres_clases) and all(memoria_clases[n] for n in nombres_clases)
-    st.checkbox('Todas', key='comparador_clases_todas', on_change=marcar_clases, width='content')
-    for nombre in nombres_clases:
-        llave = f'comparador_clases_casilla_{nombre}'
-        st.session_state[llave] = memoria_clases[nombre]
-        st.checkbox(nombre, key=llave, width='content', on_change=guardar_clase, args=(nombre,))
-elegidas = [n for n in nombres_clases if memoria_clases[n]]
+memoria_clases = st.session_state.get('comparador_clases_memoria', [])
+if isinstance(memoria_clases, dict):
+    st.session_state['comparador_clases_memoria'] = [n for n in nombres_clases if memoria_clases.get(n)]
+elegidas = filtros.lista_fondos('Clase', {n: n for n in nombres_clases}, 'comparador_clases',
+                               vacio_todos=False, conservar_orden=True)
 base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento, multiple=True)
 monedas = list(st.session_state['comparador_filtro_1'])
 clases = calculos.filtrar_moneda(catalogo_clases, monedas)
@@ -88,6 +73,9 @@ with st.expander("Fondos", expanded=False):
                 st.button('×', key=f'comparador_quitar_{fondo.codigo_cnv}', width='content',
                           help=f'Quitar {fondo.nombre}', on_click=calculos.quitar_fondo_comparador,
                           args=(st.session_state, int(fondo.codigo_cnv)))
+if not elegidos or clases.empty:
+    st.session_state.pop(calculos.SELECCION_INFORME, None)
+    st.session_state.pop(calculos.SELECCION_GESTION, None)
 if not elegidos:
     st.info("Elegí al menos un fondo.")
     st.stop()
@@ -109,6 +97,15 @@ if llevar:
     calculos.enviar_al_informe(st.session_state, fondos.codigo_cnv)
 else:
     st.session_state.pop(calculos.SELECCION_INFORME, None)
+
+if 'comparador_llevar_gestion' not in st.session_state:
+    st.session_state['comparador_llevar_gestion'] = st.session_state.get('comparador_llevar_gestion_memoria', False)
+llevar_gestion = st.toggle('Llevar estos fondos a Gestión y eficiencia', key='comparador_llevar_gestion')
+st.session_state['comparador_llevar_gestion_memoria'] = llevar_gestion
+if llevar_gestion:
+    calculos.enviar_a_gestion(st.session_state, fondos.codigo_cnv)
+else:
+    st.session_state.pop(calculos.SELECCION_GESTION, None)
 
 cache = st.session_state.setdefault("consulta_puntual", {})
 def cargar(fondo):

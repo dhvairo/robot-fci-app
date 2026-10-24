@@ -162,14 +162,16 @@ def leer_comun(clave, cargar):
 
 
 def precalentar_comunes():
-    """Las mismas claves SQL que consumen Comparador e Informe; sin historias/PDF."""
+    """Las mismas claves SQL que consumen Comparador e Informe; incluyendo la historia común para barras R/P."""
     import datos
     def cargar():
         return en_paralelo((lambda: datos._fondos_ficha_comunes(True),
                             datos._fuente_carteras_comun, datos._clases_gestion_comunes,
-                            datos._clases_vigentes_comunes, lambda: datos.filas_a_revisar(120),
+                            lambda: datos._indice_clases_comunes(datos.version_comun()),
+                            lambda: datos.filas_a_revisar(120),
                             datos._cabeceras_carteras_comunes, datos._catalogo_fondos_comun,
-                            lambda: datos._fondos_ficha_comunes(False)))
+                            lambda: datos._fondos_ficha_comunes(False),
+                            lambda: datos._serie_comun(datos.version_comun())))
     return _tarea_comun('CATALOGO', cargar)
 
 
@@ -233,7 +235,17 @@ def memorizar(clave, calcular, *seleccion, contexto=None):
     import datos
     persona = contexto if contexto is not None else (acceso.usuario() or {})
     identidad = tuple(sorted((k, str(v)) for k, v in dict(persona).items()))
-    return acceso.memoria_derivada((clave, identidad, datos.version_comun(), seleccion), calcular)
+    import time
+    import calculos
+    fallo = []
+    def construir():
+        fallo.append(True)
+        with calculos.medir_seguimiento(clave.upper()):
+            return calcular()
+    inicio = time.perf_counter()
+    resultado = acceso.memoria_derivada((clave, identidad, datos.version_comun(), seleccion), construir)
+    acceso.registrar_cache(clave.upper(), not fallo, (time.perf_counter() - inicio) * 1000)
+    return resultado
 
 
 from threading import Event

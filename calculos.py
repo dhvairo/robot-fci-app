@@ -425,6 +425,24 @@ def resumenes_efectivos(cabeceras, vista):
 
 # U12: lista de códigos CNV (int), de un solo uso, dentro de la sesión autenticada.
 SELECCION_INFORME = "informe_desde_comparador"
+SELECCION_GESTION = "gestion_desde_comparador"
+
+
+def enviar_a_gestion(sesion, codigos):
+    sesion[SELECCION_GESTION] = list(dict.fromkeys(int(c) for c in codigos))
+
+
+def recibir_en_gestion(sesion):
+    """Un pase nuevo activa comparados; luego respeta el modo elegido en Gestión."""
+    transferencia = sesion.get(SELECCION_GESTION, [])
+    if not transferencia:
+        sesion.pop('gestion_transferencia', None)
+    elif sesion.get('gestion_transferencia') != transferencia:
+        sesion['gestion_transferencia'] = list(transferencia)
+        sesion['gestion_modo'] = 'Tomar fondos comparados'
+        sesion['gestion_situacion'] = 'Todos'
+        sesion['gestion_situacion_memoria'] = 'Todos'
+    return transferencia
 
 
 def enviar_al_informe(sesion, codigos):
