@@ -33,8 +33,8 @@ todos = datos.fondos_ficha(incluir_no_seguidos=True)
 if todos.empty:
     st.info("No hay fondos en el catálogo.")
     st.stop()
-catalogo_clases = rapidez.memorizar('comparador_catalogo_clases',
-    lambda: calculos.clases_comparador(todos, [], datos.clases_de_fondo))
+catalogo_clases = rapidez.leer_comun('COMPARADOR_CATALOGO_CLASES',
+    lambda: calculos.clases_comparador(todos[['codigo_cnv', 'nombre']], [], datos.clases_de_fondo))
 nombres_clases = sorted(calculos.agrupar_clases_comparador(catalogo_clases).unique(),
                         key=lambda n: (n == 'Sin clase', n))
 for llave in list(st.session_state):

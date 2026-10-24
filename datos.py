@@ -869,6 +869,7 @@ _CONSULTAS_COMUNES = globals().get('_CONSULTAS_COMUNES', {})
 _CERROJO_COMUNES = globals().get('_CERROJO_COMUNES', RLock())
 _CERROJO_REFRESCO = globals().get('_CERROJO_REFRESCO', Lock())
 _SELLO_COMUN = globals().get('_SELLO_COMUN')
+_HISTORIAS_COMPLETAS = globals().get('_HISTORIAS_COMPLETAS', {})
 
 
 def version_comun():
@@ -928,6 +929,9 @@ def _limpiar_comunes():
         _consultar_comun.clear()
         _serie_comun.clear()
         _indice_clases_comunes.clear()
+        _historia_fondo_comun.clear()
+        _rendimientos_fondo_comun.clear()
+        _HISTORIAS_COMPLETAS.clear()
 
 
 def consultar(sql, params=None):
@@ -1086,25 +1090,82 @@ def _serie_comun(version, _fallo=None):
     """Fuente única de series y barras R/P de todos los fondos, por versión pública."""
     if _fallo is not None:
         _fallo.append(True)
-    return consultar('select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima order by fecha')
+    resultado = consultar('select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima order by fecha')
+    with _CERROJO_COMUNES:
+        _HISTORIAS_COMPLETAS[version] = resultado
+        for anterior in sorted(_HISTORIAS_COMPLETAS)[:-4]:
+            del _HISTORIAS_COMPLETAS[anterior]
+    return resultado
+
+
+@st.cache_resource(max_entries=4096, show_spinner=False)
+def _historia_fondo_comun(version, codigo, _fallo=None):
+    """Clave pública por versión/fondo; reutiliza U118 o lee solo el fondo faltante."""
+    if _fallo is not None:
+        _fallo.append(True)
+    with _CERROJO_COMUNES:
+        completa = _HISTORIAS_COMPLETAS.get(version)
+    if completa is not None:
+        clases = _indice_clases_comunes(version).get(str(codigo))
+        codigos = [] if clases is None else clases.codigo_cafci
+        return completa[completa.codigo_cafci.isin(codigos)].copy()
+    return consultar('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
+                     'from valores_diarios_ultima v join clases c using (codigo_cafci) '
+                     'where c.codigo_cnv = %s order by v.fecha', (codigo,))
+
+
+def _fondos_de_clases(codigos, version):
+    elegidos = set(codigos)
+    return [int(codigo) for codigo, clases in _indice_clases_comunes(version).items()
+            if elegidos.intersection(clases.codigo_cafci)]
 
 
 def serie(codigos_cafci):
     """La selección solo filtra pandas; nunca participa en la clave SQL común."""
     import acceso
     inicio, fallo = time.perf_counter(), []
-    todas = _serie_comun(version_comun(), fallo)
+    version = version_comun()
+    codigos = list(codigos_cafci)
+    partes = [_historia_fondo_comun(version, codigo, fallo)
+              for codigo in _fondos_de_clases(codigos, version)]
+    if partes:
+        todas = pd.concat(partes, ignore_index=True)
+    else:
+        with _CERROJO_COMUNES:
+            completa = _HISTORIAS_COMPLETAS.get(version)
+        todas = completa.iloc[:0].copy() if completa is not None else pd.DataFrame(
+            columns=['codigo_cafci', 'fecha', 'cuotaparte', 'patrimonio'])
     acceso.registrar_cache('SERIE_COMUN', not fallo, (time.perf_counter() - inicio) * 1000)
     with calculos.medir_seguimiento('SERIE_FILTRAR'):
-        return todas[todas.codigo_cafci.isin(list(codigos_cafci))].copy()
+        return todas[todas.codigo_cafci.isin(codigos)].sort_values('fecha', kind='stable').reset_index(drop=True)
 
 
 def rendimientos_ultimos(codigos_cafci):
+    """La selección filtra resultados de fondo; nunca es un parámetro ANY de la caché."""
+    import acceso
+    inicio, fallo = time.perf_counter(), []
+    codigos = list(codigos_cafci)
+    version = version_comun()
+    partes = [_rendimientos_fondo_comun(version, codigo, fallo)
+              for codigo in _fondos_de_clases(codigos, version)]
+    acceso.registrar_cache('FICHA_RENDIMIENTOS', not fallo, (time.perf_counter() - inicio) * 1000)
+    if not partes:
+        return pd.DataFrame(columns=['codigo_cafci', 'fecha', 'diario', 'dias_7', 'dias_30',
+            'mes', 'anio', 'meses_12', 'revisar', 'nota', 'cuotaparte', 'patrimonio'])
+    todas = pd.concat(partes, ignore_index=True)
+    return todas[todas.codigo_cafci.isin(codigos)].copy()
+
+
+@st.cache_resource(max_entries=4096, show_spinner=False)
+def _rendimientos_fondo_comun(version, codigo, _fallo=None):
+    if _fallo is not None:
+        _fallo.append(True)
     return consultar(
         "select distinct on (r.codigo_cafci) r.codigo_cafci, r.fecha, r.diario, r.dias_7, r.dias_30, "
         "r.mes, r.anio, r.meses_12, r.revisar, r.nota, v.cuotaparte, v.patrimonio "
         "from rendimientos r left join valores_diarios_ultima v using (codigo_cafci, fecha) "
-        "where r.codigo_cafci = any(%s) order by r.codigo_cafci, r.fecha desc", (list(codigos_cafci),))
+        "join clases c on c.codigo_cafci = r.codigo_cafci "
+        "where c.codigo_cnv = %s order by r.codigo_cafci, r.fecha desc", (codigo,))
 
 
 def _cartera_comun(codigo_cnv):

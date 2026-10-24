@@ -165,7 +165,12 @@ def precalentar_comunes():
     """Las mismas claves SQL que consumen Comparador e Informe; incluyendo la historia común para barras R/P."""
     import datos
     def cargar():
-        return en_paralelo((lambda: datos._fondos_ficha_comunes(True),
+        def catalogo_clases():
+            import calculos
+            return _tarea_comun('COMPARADOR_CATALOGO_CLASES', lambda: calculos.clases_comparador(
+                datos._fondos_ficha_comunes(True)[['codigo_cnv', 'nombre']], [], datos.clases_de_fondo)
+                ).result(timeout=TIEMPO_ESPERA)
+        return en_paralelo((catalogo_clases,
                             datos._fuente_carteras_comun, datos._clases_gestion_comunes,
                             lambda: datos._indice_clases_comunes(datos.version_comun()),
                             lambda: datos.filas_a_revisar(120),
