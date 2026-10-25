@@ -736,6 +736,21 @@ def cartera_encabezado(codigo_cnv, vista=None):
     return calculos.encabezado_efectivo(_cartera_encabezado_comun(codigo_cnv), vista, codigo_cnv)
 
 
+def cambios_cartera(codigo_cnv):
+    """Historial público a pedido, compartido por fondo y versión; sin consultas de arranque."""
+    return _cambios_cartera_comunes(int(codigo_cnv), version_comun())
+
+
+@st.cache_resource(max_entries=128, show_spinner=False)
+def _cambios_cartera_comunes(codigo_cnv, version):
+    from robot.cambios_cartera import SQL_HISTORIA, carteras_desde_filas, historial
+    # No registrar en las consultas del precalentado/refresco: historia solo a pedido.
+    tabla = _consultar_comun(SQL_HISTORIA + 'where h.codigo_cnv = %s order by h.fecha_cartera, c.orden',
+                            (codigo_cnv,), [], version)
+    filas = tabla.astype(object).where(pd.notna(tabla), None).to_dict('records')
+    return historial(carteras_desde_filas(filas))
+
+
 def buscar_instrumentos(texto):
     vista = vista_carteras()
     if vista['estado'] != 'habilitado':

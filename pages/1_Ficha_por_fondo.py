@@ -227,6 +227,68 @@ def mostrar_tabla(tabla, **opciones):
         st.dataframe(tabla, **opciones)
 
 
+def mostrar_cambios_cartera(codigo):
+    st.subheader('Cambios de cartera')
+    if not st.toggle('Abrir Cambios de cartera', key=f'abrir_cambios_{codigo}'):
+        return
+    with st.spinner('Leyendo carteras guardadas…'):
+        try:
+            historia = datos.cambios_cartera(codigo)
+        except datos.TopeLectura:
+            st.warning('Se alcanzó el tope diario de lectura. Volvé a intentar mañana.')
+            return
+        except (datos.psycopg.Error, ValueError):
+            st.warning('No se pudo reconstruir el historial de carteras guardadas.')
+            return
+    if not historia:
+        st.info('Todavía no hay carteras guardadas para comparar.')
+        return
+    fechas = [c['fecha'] for c in historia]
+    fecha = st.selectbox('Fecha de cartera a comparar', fechas, format_func=formato.fecha,
+                         key=f'fecha_cambios_{codigo}')
+    cambio = next(c for c in historia if c['fecha'] == fecha)
+    st.caption('Comparación reproducida desde carteras guardadas y su clasificación de cada fecha. '
+               'Los cambios son descriptivos: no acreditan operaciones ni evalúan la gestión. '
+               'La rotación es la mitad de la suma de las diferencias absolutas de peso, incluido Resto.')
+    if cambio['anterior'] is not None:
+        st.caption(f"{formato.fecha(cambio['anterior'])} → {formato.fecha(cambio['fecha'])} · "
+                   f"{cambio['dias']} días · {cambio['fuente_anterior']} → {cambio['fuente_actual']}")
+    for aviso in cambio['avisos']:
+        st.warning(aviso)
+    if cambio['rotacion'] is None:
+        st.info(cambio['estado'])
+    else:
+        st.metric('Rotación observada' if cambio['parcial'] else 'Rotación de cartera',
+                  f"{formato.numero(cambio['rotacion'])} %")
+        etiquetas = {'instrumento': 'Activo', 'antes': 'Antes %', 'despues': 'Después %',
+                     'diferencia': 'Diferencia pp', 'coincidencia': 'Identificación',
+                     'movimiento': 'Movimiento', 'campo': 'Clasificación', 'identidad': 'Identidad'}
+        def tabla(filas):
+            base = pd.DataFrame(filas).rename(columns=etiquetas)
+            if 'Clasificación' in base:
+                base['Clasificación'] = base['Clasificación'].map(
+                    {'rubro_cnv': 'Rubro CNV', **ETIQUETAS})
+            mostrar_tabla(formato.tabla(base, numeros={'Antes %': 2, 'Después %': 2, 'Diferencia pp': 2}),
+                          hide_index=True, width='stretch')
+        for campo, titulo in (('entraron', 'Entraron'), ('salieron', 'Salieron del detalle' if cambio['parcial'] else 'Salieron'),
+                              ('cambio_peso', 'Cambió peso'), ('clasificacion', 'Cambio por tipo de activo / clasificación')):
+            st.markdown(f'**{titulo}**')
+            if cambio[campo]:
+                tabla(cambio[campo])
+            else:
+                st.caption('Sin cambios registrados.')
+        if cambio['resto'] is not None:
+            st.markdown('**Variación del Resto**')
+            tabla([cambio['resto']])
+    st.markdown('**Historial de comparaciones**')
+    mostrar_tabla(formato.tabla(pd.DataFrame([
+        {'Cartera': c['fecha'], 'Anterior': c['anterior'], 'Días': c['dias'], 'Rotación %': c['rotacion'],
+         'Estado': c['estado'], 'Comparación parcial': c['parcial'],
+         'Fuente anterior': c['fuente_anterior'], 'Fuente actual': c['fuente_actual']}
+        for c in historia]), fechas=['Cartera', 'Anterior'], numeros={'Rotación %': 2}),
+        hide_index=True, width='stretch')
+
+
 st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide")
 acceso.requerir()
 inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
@@ -438,6 +500,8 @@ else:
         mostrar_edicion_clasificacion(
             calculos.filtrar_por_rubros(cart, elegidos),
             puntual.get('clasificacion') if puntual is not None else vista, codigo, e['fecha_cartera'])
+
+mostrar_cambios_cartera(codigo)
 
 # ───────── Hechos relevantes ─────────
 st.subheader("Hechos relevantes")

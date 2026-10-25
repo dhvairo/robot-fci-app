@@ -23,8 +23,14 @@ def _firma(ruta):
 def al_dia(nombres=PROPIOS, carpeta=CARPETA):
     """Recarga los módulos propios cuyo archivo cambió. Devuelve los nombres recargados."""
     recargados = []
+    # U125: el único módulo de robot distribuido con la app, antes de datos.py.
+    if nombres is PROPIOS:
+        ruta_robot = CARPETA / 'robot'
+        if not ruta_robot.exists():
+            ruta_robot = CARPETA.parent / 'robot'
+        recargados += al_dia(('robot.cambios_cartera',), ruta_robot.parent)
     for nombre in nombres:
-        ruta = Path(carpeta) / f"{nombre}.py"
+        ruta = Path(carpeta).joinpath(*nombre.split('.')).with_suffix('.py')
         modulo = sys.modules.get(nombre)
         if not ruta.exists() or (modulo is not None and not hasattr(modulo, "__file__")):
             continue                       # no existe o es un reemplazo de prueba

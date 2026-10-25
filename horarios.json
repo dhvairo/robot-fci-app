@@ -2,7 +2,7 @@
   "corridas": [
     {
       "flujo": "robot_carteras.yml",
-      "nombre": "Robot de carteras (CAFCI; hechos CNV)",
+      "nombre": "Robot de carteras CAFCI mensual",
       "cron_utc": "0 13 * * *",
       "hora_ar": "10:00",
       "dias_ar": [
@@ -39,6 +39,21 @@
         3,
         4,
         5
+      ]
+    },
+    {
+      "flujo": "robot_hechos_cnv.yml",
+      "nombre": "Hechos relevantes y vigía CNV diario",
+      "cron_utc": "0 13 * * *",
+      "hora_ar": "10:00",
+      "dias_ar": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
       ]
     }
   ],
