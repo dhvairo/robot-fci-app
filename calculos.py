@@ -7,6 +7,7 @@ import time
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import timedelta
+from functools import lru_cache
 
 import pandas as pd
 
@@ -1391,3 +1392,140 @@ def costos_ficha(tabla):
         "honorarios_exito": "Éxito %"}
     salida = tabla[[c for c in etiquetas if c in tabla]].rename(columns=etiquetas)
     return formato.tabla(salida, numeros={c: 4 for c in salida if c.endswith("%")}).fillna(formato.VACIO)
+
+
+# ───────── U126: solapamiento de carteras entre fondos ─────────
+
+MAX_FONDOS_SOLAPAMIENTO = 6
+DIAS_FECHAS_CERCANAS = 7
+DIAS_FECHAS_LEJANAS = 35
+_NO_ACTIVO = {"Pasivos", "Sin detalle", "Disponibilidades"}
+_TIPOS_EMISOR = r"(?:ON|O\.N\.|OBLIGACIONES? NEGOCIABLES?|FF|FIDEICOMISO FINANCIERO|VRD|VDF|CP|BONO|BO|TITULO|TIT|LETRA|PAGARE|CHEQUES?)"
+_CORTE_EMISOR = re.compile(
+    r"\s+(?:C\d+\b|CL\b|CLASE\b|CLASES\b|SERIE\b|S\d+\b|SER\b|REG\b|VTO\b|VENC|TV\b|TF\b|\d|\(|-)", re.I)
+_ALIAS_EMISOR = (("BCO ", "BANCO "), ("BBVA FRANCES", "BANCO FRANCES"), ("BANCO BBVA", "BANCO FRANCES"),
+                 ("S.A.", ""), (" SA", ""))
+
+
+def _sin_acentos(texto):
+    return "".join(c for c in unicodedata.normalize("NFD", str(texto)) if unicodedata.category(c) != "Mn")
+
+
+def clave_activo(instrumento):
+    """Identidad de una especie: minúsculas, sin acentos ni espacios repetidos."""
+    return re.sub(r"\s+", " ", _sin_acentos(instrumento).casefold()).strip()
+
+
+@lru_cache(maxsize=8192)
+def emisor_de(instrumento, categoria_resumen=None):
+    """Emisor aproximado a partir del nombre de la especie (la fuente no trae emisor).
+
+    Quita el tipo inicial ("ON", "Bono"...) y corta en clase/serie/vencimiento; une alias comunes."""
+    if categoria_resumen == "Deuda soberana":
+        return "Tesoro Nacional (deuda soberana)"
+    texto = re.sub(r"\s+", " ", _sin_acentos(instrumento)).strip().upper()
+    texto = re.sub(r"^" + _TIPOS_EMISOR + r"\b\.?\s+", "", texto)
+    texto = _CORTE_EMISOR.split(texto, maxsplit=1)[0]
+    for viejo, nuevo in _ALIAS_EMISOR:
+        texto = texto.replace(viejo, nuevo)
+    texto = re.sub(r"\s+", " ", texto).strip(" .,")
+    return texto.title() if texto else str(instrumento).strip()
+
+
+def _cartera_solapamiento(fondo):
+    """Especies con peso positivo (una fila por línea) y el Resto aparte."""
+    filas = fondo["cartera"].copy()
+    filas["pct_pn"] = pd.to_numeric(filas["pct_pn"], errors="coerce")
+    resto = float(filas.loc[filas["categoria_resumen"].eq("Sin detalle"), "pct_pn"].sum())
+    activos = filas[~filas["categoria_resumen"].isin(_NO_ACTIVO) & filas["pct_pn"].gt(0)].copy()
+    activos["clave"] = activos["instrumento"].map(clave_activo)
+    activos["emisor"] = [emisor_de(i, c) for i, c in zip(activos["instrumento"], activos["categoria_resumen"])]
+    activos["clave_emisor"] = activos["emisor"].map(clave_activo)
+    return activos, resto
+
+
+def _minimo_comun(a, b):
+    comunes = a.index.intersection(b.index)
+    return float(pd.concat([a[comunes], b[comunes]], axis=1).min(axis=1).sum()) if len(comunes) else 0.0
+
+
+def solapamiento_carteras(fondos):
+    """Compara 2 a 6 carteras. `fondos`: lista de dict(codigo_cnv, nombre, fecha_cartera, fuente, cartera).
+
+    Pesos sobre el patrimonio de cada fondo, sin renormalizar. El Resto («Sin detalle») es desconocido:
+    no cuenta como coincidencia ni como diferencia. Disponibilidades y pasivos tampoco son especies.
+    Devuelve dict con tablas y avisos; con menos de 2 fondos con cartera, solo `avisos`."""
+    validos = [f for f in fondos if f.get("cartera") is not None and not f["cartera"].empty]
+    avisos = [f"{f['nombre']}: sin cartera cargada; no entra en la comparación." for f in fondos if f not in validos]
+    if len(validos) < 2:
+        return {"avisos": ["Elegí al menos dos fondos con cartera para comparar."] + avisos, "fondos": []}
+    if len(validos) > MAX_FONDOS_SOLAPAMIENTO:
+        avisos.append(f"Se comparan como máximo {MAX_FONDOS_SOLAPAMIENTO} fondos; se usan los primeros.")
+        validos = validos[:MAX_FONDOS_SOLAPAMIENTO]
+    nombres = [f["nombre"] for f in validos]
+    activos, restos = {}, {}
+    for f in validos:
+        activos[f["nombre"]], restos[f["nombre"]] = _cartera_solapamiento(f)
+    pesos = {n: a.groupby("clave")["pct_pn"].sum() for n, a in activos.items()}
+    emisores = {n: a.groupby("clave_emisor")["pct_pn"].sum() for n, a in activos.items()}
+    nombre_activo, nombre_emisor = {}, {}
+    for a in activos.values():
+        for c, i, e, ce in zip(a["clave"], a["instrumento"], a["emisor"], a["clave_emisor"]):
+            nombre_activo.setdefault(c, (i, e))
+            nombre_emisor.setdefault(ce, e)
+
+    def compartidos(por_fondo, rotulos, titulos):
+        base = pd.concat(por_fondo, axis=1, keys=nombres)
+        base = base[base.notna().sum(axis=1) >= 2].copy()
+        base["Fondos"] = base[nombres].notna().sum(axis=1)
+        base["En común (mín.)"] = base[nombres].min(axis=1, skipna=True)
+        base = base.sort_values(["Fondos", "En común (mín.)"], ascending=False)
+        for lugar, titulo in enumerate(titulos):
+            base.insert(lugar, titulo, [rotulos[c][lugar] if isinstance(rotulos[c], tuple) else rotulos[c] for c in base.index])
+        return base.reset_index(drop=True)
+
+    exclusivos = {}
+    for n in nombres:
+        otros = set().union(*(set(pesos[o].index) for o in nombres if o != n))
+        propios = activos[n][~activos[n]["clave"].isin(otros)]
+        propios = propios.groupby("clave", as_index=False).agg(
+            Activo=("instrumento", "first"), Emisor=("emisor", "first"), **{"% del patrimonio": ("pct_pn", "sum")})
+        exclusivos[n] = propios.drop(columns="clave").sort_values("% del patrimonio", ascending=False).reset_index(drop=True)
+    conocido = {n: float(pesos[n].sum()) for n in nombres}
+    matriz_activos = pd.DataFrame(0.0, index=nombres, columns=nombres)
+    matriz_emisores = matriz_activos.copy()
+    for i, a in enumerate(nombres):
+        matriz_activos.loc[a, a] = matriz_emisores.loc[a, a] = conocido[a]
+        for b in nombres[i + 1:]:
+            matriz_activos.loc[a, b] = matriz_activos.loc[b, a] = _minimo_comun(pesos[a], pesos[b])
+            matriz_emisores.loc[a, b] = matriz_emisores.loc[b, a] = _minimo_comun(emisores[a], emisores[b])
+    resumen = pd.DataFrame({"Fondo": nombres, "Cartera al": [f["fecha_cartera"] for f in validos],
+                            "Fuente": [f.get("fuente") or "cnv" for f in validos],
+                            "Conocido %": [conocido[n] for n in nombres], "Resto %": [restos[n] for n in nombres]})
+    dimensiones = {}
+    for campo, titulo in (("categoria_resumen", "Tipo de activo"), ("moneda", "Moneda"), ("indexacion", "Indexación")):
+        partes = {n: a.assign(**{campo: a[campo].fillna("Sin dato")}).groupby(campo)["pct_pn"].sum()
+                  for n, a in activos.items()}
+        t = pd.concat(partes, axis=1, keys=nombres).fillna(0.0)
+        t.index.name = titulo
+        dimensiones[titulo] = t.sort_values(nombres[0], ascending=False).reset_index()
+    fechas = [pd.Timestamp(f["fecha_cartera"]) for f in validos if f.get("fecha_cartera") is not None]
+    dias = (max(fechas) - min(fechas)).days if fechas else 0
+    if dias > DIAS_FECHAS_LEJANAS:
+        avisos.append(f"Las carteras están separadas por {dias} días: no son comparables; los resultados pueden engañar.")
+    elif len(set(fechas)) > 1:
+        avisos.append(f"Las carteras son de fechas distintas ({dias} días entre la más vieja y la más nueva); revisá la fecha de cada fondo.")
+    con_resto = [n for n in nombres if restos[n] > 0.005]
+    if con_resto:
+        avisos.append("Resto (sin detalle, desconocido) en " + ", ".join(f"{n} {restos[n]:.1f}%" for n in con_resto)
+                      + ": no cuenta como coincidencia ni como diferencia; podría haber más coincidencias dentro del Resto. "
+                        "Una baja coincidencia conocida no prueba que no haya coincidencias ocultas, y un gerente distinto "
+                        "no prueba carteras distintas.")
+    if len({f.get("fuente") or "cnv" for f in validos}) > 1:
+        avisos.append("Las carteras vienen de fuentes distintas (CNV completa y CAFCI parcial): los nombres de las "
+                      "especies pueden diferir y ocultar coincidencias; mirá también la coincidencia por emisor.")
+    return {"avisos": avisos, "fondos": nombres, "resumen": resumen,
+            "compartidos": compartidos(pesos, nombre_activo, ("Activo", "Emisor")),
+            "compartidos_emisor": compartidos(emisores, nombre_emisor, ("Emisor",)),
+            "exclusivos": exclusivos, "matriz_activos": matriz_activos, "matriz_emisores": matriz_emisores,
+            "dimensiones": dimensiones, "dias_entre_fechas": dias}
