@@ -135,9 +135,21 @@ def _conexion_comun(url):
         prestamo.close()
 
 
-TOPE_LECTURA_DIA = 150_000_000
-_lectura = {'dia': None, 'bytes': 0}
-_lock_lectura = RLock()
+# 2 GB decimales por día y proceso: margen para el uso normal del plan PRO.
+TOPE_LECTURA_DIA = 2_000_000_000
+_lectura = globals().get('_lectura', {'dia': None, 'bytes': 0})
+_lock_lectura = globals().get('_lock_lectura', RLock())
+AVISO_TOPE = ('Se alcanzó el tope diario de lectura de la base. Los datos ya cargados siguen disponibles; '
+              'avisá al administrador.')
+
+
+@contextmanager
+def seccion_disponible():
+    """Una sección sin datos no impide dibujar las siguientes, aun sin presupuesto."""
+    try:
+        yield
+    except TopeLectura:
+        st.warning(AVISO_TOPE)
 
 
 class TopeLectura(Exception):
@@ -150,20 +162,39 @@ def mb_leidos_hoy():
         return _lectura['bytes'] / 1_000_000 if _lectura['dia'] == time.strftime('%Y-%m-%d') else 0.0
 
 
-def _presupuesto_lectura(nuevos=0):
+def _presupuesto_lectura(nuevos=0, etiqueta='sin_etiqueta'):
     """Suma `nuevos` bytes al día; con el tope superado no deja pasar otra lectura de la base."""
     hoy = time.strftime('%Y-%m-%d')
     with _lock_lectura:
         if _lectura['dia'] != hoy:
             _lectura.update(dia=hoy, bytes=0)
-        if _lectura['bytes'] >= TOPE_LECTURA_DIA:
+        if not nuevos and _lectura['bytes'] >= TOPE_LECTURA_DIA:
             raise TopeLectura()
         _lectura['bytes'] += nuevos
         total = _lectura['bytes']
     if nuevos:
         import logging
-        logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO LECTURA %.3f_MB día %.3f_MB',
-                                            nuevos / 1_000_000, total / 1_000_000)
+        logging.getLogger('seguimiento').log(logging.WARNING,
+            'SEGUIMIENTO LECTURA %.3f_MB día %.3f_MB consulta=%s',
+            nuevos / 1_000_000, total / 1_000_000, etiqueta)
+
+
+def _etiqueta_consulta(sql):
+    """Etiqueta de código, pantalla y hash; nunca SQL, parámetros ni identidad."""
+    import sys
+    marco = sys._getframe(1)
+    lector, pantalla = 'comun', 'comunes'
+    while marco:
+        ruta = Path(marco.f_code.co_filename)
+        nombre = marco.f_code.co_name
+        if ruta.name == 'datos.py' and nombre not in (
+                '_ejecutar', '_consultar_comun', 'consultar', '_etiqueta_consulta'):
+            lector = nombre
+        if ruta.parent.name == 'pages' or ruta.name == 'Inicio.py':
+            pantalla = ruta.stem
+            break
+        marco = marco.f_back
+    return f'{lector}:{hashlib.sha256(sql.encode("utf-8")).hexdigest()[:8]} pantalla={pantalla}'
 
 
 def _ejecutar(sql, params=None):
@@ -180,7 +211,7 @@ def _ejecutar(sql, params=None):
     with calculos.medir_seguimiento('COMUN_DATAFRAME'):
         df = pd.DataFrame.from_records(filas, columns=columnas)
     with calculos.medir_seguimiento('COMUN_BYTES'):
-        _presupuesto_lectura(int(df.memory_usage(index=False, deep=True).sum()))
+        _presupuesto_lectura(int(df.memory_usage(index=False, deep=True).sum()), _etiqueta_consulta(sql))
     with calculos.medir_seguimiento('COMUN_TIPOS'):
         # PostgreSQL ya informa NUMERIC: evitar un callback Python por celda/columna.
         for c in numericas:
@@ -738,7 +769,21 @@ def cartera_encabezado(codigo_cnv, vista=None):
 
 def cambios_cartera(codigo_cnv):
     """Historial público a pedido, compartido por fondo y versión; sin consultas de arranque."""
-    return _cambios_cartera_comunes(int(codigo_cnv), version_comun())
+    codigo = int(codigo_cnv)
+    try:
+        resultado = _cambios_cartera_comunes(codigo, version_comun())
+    except TopeLectura:
+        with _CERROJO_COMUNES:
+            anterior = _ULTIMOS_CAMBIOS.get(codigo)
+        if anterior is None:
+            raise
+        st.warning(AVISO_TOPE)
+        return anterior
+    with _CERROJO_COMUNES:
+        _ULTIMOS_CAMBIOS[codigo] = resultado
+        while len(_ULTIMOS_CAMBIOS) > 128:
+            del _ULTIMOS_CAMBIOS[next(iter(_ULTIMOS_CAMBIOS))]
+    return resultado
 
 
 @st.cache_resource(max_entries=128, show_spinner=False)
@@ -885,6 +930,8 @@ _CERROJO_COMUNES = globals().get('_CERROJO_COMUNES', RLock())
 _CERROJO_REFRESCO = globals().get('_CERROJO_REFRESCO', Lock())
 _SELLO_COMUN = globals().get('_SELLO_COMUN')
 _HISTORIAS_COMPLETAS = globals().get('_HISTORIAS_COMPLETAS', {})
+_ULTIMOS_COMUNES = globals().get('_ULTIMOS_COMUNES', {})
+_ULTIMOS_CAMBIOS = globals().get('_ULTIMOS_CAMBIOS', {})
 
 
 def version_comun():
@@ -895,7 +942,26 @@ def version_comun():
 def _consultar_comun(sql, params, _fallo, version=0):
     """Solo resultados SQL públicos, sin attrs privados ni pickle en cada lectura."""
     _fallo.append(True)
-    return _ejecutar(sql, params)
+    clave = (sql, repr(params))
+    resultado = _ejecutar(sql, params)
+    with _CERROJO_COMUNES:
+        _ULTIMOS_COMUNES[clave] = resultado
+        while len(_ULTIMOS_COMUNES) > 512:
+            del _ULTIMOS_COMUNES[next(iter(_ULTIMOS_COMUNES))]
+    return resultado
+
+
+def _leer_comun_disponible(sql, params, fallo, version):
+    try:
+        return _consultar_comun(sql, params, fallo, version)
+    except TopeLectura:
+        with _CERROJO_COMUNES:
+            anterior = _ULTIMOS_COMUNES.get((sql, repr(params)))
+        if anterior is None:
+            raise
+        st.warning(AVISO_TOPE)
+        # Fuera de la caché de la nueva versión: mañana se reintenta la lectura.
+        return anterior
 
 
 def sello_comun():
@@ -947,6 +1013,8 @@ def _limpiar_comunes():
         _historia_fondo_comun.clear()
         _rendimientos_fondo_comun.clear()
         _HISTORIAS_COMPLETAS.clear()
+        _ULTIMOS_COMUNES.clear()
+        _ULTIMOS_CAMBIOS.clear()
 
 
 def consultar(sql, params=None):
@@ -972,13 +1040,10 @@ def consultar(sql, params=None):
         version = _VERSION_COMUN
     # psycopg necesita listas para los parámetros ANY; mantenerlas en SQL.
     try:
-        resultado = _consultar_comun(sql, params, fallo, version)
+        resultado = _leer_comun_disponible(sql, params, fallo, version)
         with calculos.medir_seguimiento('COMUN_COPIA'):
             resultado = resultado.copy(deep=True)
     except TopeLectura:
-        st.error('Se alcanzó el tope diario de lectura de la base. Los datos ya cargados siguen disponibles; '
-                 'avisá al administrador.')
-        st.stop()
         raise
     acceso.registrar_cache('COMUN_' + hashlib.sha256(sql.encode('utf-8')).hexdigest()[:8],
                           not fallo, (time.perf_counter() - inicio) * 1000)
@@ -1108,7 +1173,11 @@ def _serie_comun(version, _fallo=None):
     """Fuente única de series y barras R/P de todos los fondos, por versión pública."""
     if _fallo is not None:
         _fallo.append(True)
-    resultado = consultar('select codigo_cafci, fecha, cuotaparte, patrimonio from valores_diarios_ultima order by fecha')
+    # Solo los seguidos usan historia SQL en Ficha/Comparador; los demás tienen consulta puntual.
+    # Conservar todas las fechas: el gráfico de Ficha no pierde historia.
+    resultado = consultar('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
+        'from valores_diarios_ultima v join clases c using (codigo_cafci) '
+        'join fondos f using (codigo_cnv) where f.seguido and c.vigente_hasta is null order by v.fecha')
     with _CERROJO_COMUNES:
         _HISTORIAS_COMPLETAS[version] = resultado
         for anterior in sorted(_HISTORIAS_COMPLETAS)[:-4]:
@@ -1127,9 +1196,10 @@ def _historia_fondo_comun(version, codigo, _fallo=None):
         clases = _indice_clases_comunes(version).get(str(codigo))
         codigos = [] if clases is None else clases.codigo_cafci
         return completa[completa.codigo_cafci.isin(codigos)].copy()
-    return consultar('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
+    # A pedido: no registrarla además para el refresco masivo, que ya carga _serie_comun.
+    return _leer_comun_disponible('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
                      'from valores_diarios_ultima v join clases c using (codigo_cafci) '
-                     'where c.codigo_cnv = %s order by v.fecha', (codigo,))
+                     'where c.codigo_cnv = %s order by v.fecha', (codigo,), [], version)
 
 
 def _fondos_de_clases(codigos, version):

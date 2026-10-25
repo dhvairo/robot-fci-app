@@ -364,159 +364,162 @@ st.markdown(f"**Idea y temática:** {idea}")
 st.caption(f"Código CNV {codigo} · {fondo['estado']}")
 
 # ───────── Clases y rendimientos ─────────
-clases = datos.clases_de_fondo(codigo)
-st.subheader("Clases")
-if clases.empty:
-    st.info("El fondo no tiene clases vigentes en el catálogo.")
-else:
-    por_defecto = datos.clases_preferidas(clases)
-    elegidas = st.multiselect("Clases a mostrar", clases["nombre"].tolist(),
-                              default=por_defecto["nombre"].tolist(),
-                              help="Por defecto Clase A y B; si el fondo no las tiene, las disponibles.")
-    sel = clases[clases["nombre"].isin(elegidas)]
-    clases_sel = tuple(elegidas)
-    if len(sel):
-        if seguido:
-            rend = datos.rendimientos_ultimos(sel["codigo_cafci"])
-            tabla = sel.merge(rend, on="codigo_cafci", how="left")
-        elif puntual is not None and not puntual["rendimientos"].empty:
-            tabla = sel.merge(puntual["rendimientos"], on="codigo_cafci", how="left")
-        else:
-            tabla = datos.foto_de_fondo(codigo)
-            tabla = tabla[tabla["codigo_cafci"].isin(sel["codigo_cafci"])].copy()
-            for campo in ("diario", "dias_7", "dias_30"):
-                tabla[campo] = None
-            tabla["revisar"] = False
-        revisar = tabla[tabla["revisar"] == True]["nombre"].tolist()  # noqa: E712
-        tabla = tabla.rename(columns={"nombre": "Clase", "moneda": "Moneda", "fecha": "Fecha",
-                                      "cuotaparte": "Cuotaparte", "patrimonio": "Patrimonio",
-                                      "diario": "Diario %", "dias_7": "7 días %", "dias_30": "30 días %",
-                                      "mes": "Mes %", "anio": "Año %", "meses_12": "12 meses %"})
-        cols = ["Clase", "Moneda", "Fecha", "Cuotaparte", "Patrimonio", "Diario %", "7 días %",
-                "30 días %", "Mes %", "Año %", "12 meses %"]
-        tabla_pdf = formato.tabla(tabla[cols], fechas=["Fecha"], enteros=["Patrimonio"],
-                                   numeros={"Cuotaparte": 4, **{c: 2 for c in cols if c.endswith("%")}})
-        mostrar_tabla(tabla_pdf,
-                     hide_index=True, width="stretch")
-        calculados = seguido or (puntual is not None and not puntual["rendimientos"].empty)
-        nota = ('Rendimientos calculados con las reglas del robot sobre la cuotaparte; "—" = historia insuficiente '
-                '(o clase sin patrimonio) para ese período. No consideran distribución de utilidades.' if calculados else
-                'Rendimientos de la CAFCI: mes, año y 12 meses. "—" = dato no disponible. '
-                'No consideran distribución de utilidades.')
-        st.caption(nota)
-        notas_pdf.append(nota)
-        if not seguido:
-            costos_pdf = calculos.costos_ficha(datos.foto_de_fondo(codigo))
-            mostrar_tabla(costos_pdf, hide_index=True, width="stretch")
-        if revisar and seguido:
-            st.warning("Diario, mes, año o 12 meses calculados distintos de los de la CAFCI en: " + ", ".join(revisar)
-                       + ". Ver la pantalla \"Filas a revisar\".")
+with datos.seccion_disponible():
+    clases = datos.clases_de_fondo(codigo)
+    st.subheader("Clases")
+    if clases.empty:
+        st.info("El fondo no tiene clases vigentes en el catálogo.")
+    else:
+        por_defecto = datos.clases_preferidas(clases)
+        elegidas = st.multiselect("Clases a mostrar", clases["nombre"].tolist(),
+                                  default=por_defecto["nombre"].tolist(),
+                                  help="Por defecto Clase A y B; si el fondo no las tiene, las disponibles.")
+        sel = clases[clases["nombre"].isin(elegidas)]
+        clases_sel = tuple(elegidas)
+        if len(sel):
+            if seguido:
+                rend = datos.rendimientos_ultimos(sel["codigo_cafci"])
+                tabla = sel.merge(rend, on="codigo_cafci", how="left")
+            elif puntual is not None and not puntual["rendimientos"].empty:
+                tabla = sel.merge(puntual["rendimientos"], on="codigo_cafci", how="left")
+            else:
+                tabla = datos.foto_de_fondo(codigo)
+                tabla = tabla[tabla["codigo_cafci"].isin(sel["codigo_cafci"])].copy()
+                for campo in ("diario", "dias_7", "dias_30"):
+                    tabla[campo] = None
+                tabla["revisar"] = False
+            revisar = tabla[tabla["revisar"] == True]["nombre"].tolist()  # noqa: E712
+            tabla = tabla.rename(columns={"nombre": "Clase", "moneda": "Moneda", "fecha": "Fecha",
+                                          "cuotaparte": "Cuotaparte", "patrimonio": "Patrimonio",
+                                          "diario": "Diario %", "dias_7": "7 días %", "dias_30": "30 días %",
+                                          "mes": "Mes %", "anio": "Año %", "meses_12": "12 meses %"})
+            cols = ["Clase", "Moneda", "Fecha", "Cuotaparte", "Patrimonio", "Diario %", "7 días %",
+                    "30 días %", "Mes %", "Año %", "12 meses %"]
+            tabla_pdf = formato.tabla(tabla[cols], fechas=["Fecha"], enteros=["Patrimonio"],
+                                       numeros={"Cuotaparte": 4, **{c: 2 for c in cols if c.endswith("%")}})
+            mostrar_tabla(tabla_pdf,
+                         hide_index=True, width="stretch")
+            calculados = seguido or (puntual is not None and not puntual["rendimientos"].empty)
+            nota = ('Rendimientos calculados con las reglas del robot sobre la cuotaparte; "—" = historia insuficiente '
+                    '(o clase sin patrimonio) para ese período. No consideran distribución de utilidades.' if calculados else
+                    'Rendimientos de la CAFCI: mes, año y 12 meses. "—" = dato no disponible. '
+                    'No consideran distribución de utilidades.')
+            st.caption(nota)
+            notas_pdf.append(nota)
+            if not seguido:
+                costos_pdf = calculos.costos_ficha(datos.foto_de_fondo(codigo))
+                mostrar_tabla(costos_pdf, hide_index=True, width="stretch")
+            if revisar and seguido:
+                st.warning("Diario, mes, año o 12 meses calculados distintos de los de la CAFCI en: " + ", ".join(revisar)
+                           + ". Ver la pantalla \"Filas a revisar\".")
 
-        if seguido or puntual is not None:
-            historia = datos.serie(sel["codigo_cafci"]) if seguido else puntual["serie"]
-            def armar_serie():
-                ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
-                ser = calculos.base_100(ser, ser["fecha"].min())
-                fig = None
-                if ser["base 100"].notna().any():
-                    fig = px.line(ser, x="fecha", y="base 100", color="nombre", markers=True,
-                                  title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
-                    fig.update_traces(connectgaps=False)
-                    fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
-                    fig = formato.plotly_es(fig, fechas_x=True)
-                return ser, fig
-            ser, fig = memorizar("ficha_serie", armar_serie, codigo, clases_sel)
-            serie_pdf = ser
-            if calculos.historia_insuficiente(ser):
-                st.info("Historia insuficiente en alguna clase: se necesitan dos cuotapartes válidas para mostrar evolución.")
-            if fig is not None:
-                st.plotly_chart(fig, width="stretch")
+            if seguido or puntual is not None:
+                historia = datos.serie(sel["codigo_cafci"]) if seguido else puntual["serie"]
+                def armar_serie():
+                    ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
+                    ser = calculos.base_100(ser, ser["fecha"].min())
+                    fig = None
+                    if ser["base 100"].notna().any():
+                        fig = px.line(ser, x="fecha", y="base 100", color="nombre", markers=True,
+                                      title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
+                        fig.update_traces(connectgaps=False)
+                        fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
+                        fig = formato.plotly_es(fig, fechas_x=True)
+                    return ser, fig
+                ser, fig = memorizar("ficha_serie", armar_serie, codigo, clases_sel)
+                serie_pdf = ser
+                if calculos.historia_insuficiente(ser):
+                    st.info("Historia insuficiente en alguna clase: se necesitan dos cuotapartes válidas para mostrar evolución.")
+                if fig is not None:
+                    st.plotly_chart(fig, width="stretch")
 
-# ───────── Cartera ─────────
-st.subheader("Cartera semanal")
-enc = datos.cartera_encabezado(codigo, vista) if seguido else pd.DataFrame()
-cart = datos.cartera(codigo, vista) if seguido else pd.DataFrame()
-if puntual is not None:
-    enc, cart = puntual["encabezado"], puntual["cartera"]
-if not seguido and puntual is None:
-    st.info(filtros.AVISO_NO_SEGUIDO)
-elif enc.empty or cart.empty:
-    st.info("Todavía no hay cartera cargada para este fondo.")
-else:
-    e = enc.iloc[0]
-    parcial = calculos.leyenda_cartera(e.get('fuente', 'cnv'))
-    if parcial:
-        st.caption(parcial)
-        notas_pdf.append(parcial)
-    st.caption(f"Cartera al {formato.fecha(e['fecha_cartera'])} · patrimonio {formato.entero(e['patrimonio'])} "
-               f"{e['moneda']} · {int(e['instrumentos'])} líneas")
-    if int(e["sin_clasificar"]):
-        st.warning(f"{int(e['sin_clasificar'])} línea(s) sin clasificar ({formato.numero(e['pct_sin_clasificar'])}% del PN).")
-    activos = cart[cart["categoria_resumen"] != "Pasivos"]
-    pasivos = cart[cart["categoria_resumen"] == "Pasivos"]["pct_pn"].sum()
-    g1, g2 = st.columns(2)
-    resumen = activos.groupby("categoria_resumen", as_index=False)["pct_pn"].sum()
-    resumen = resumen[resumen["pct_pn"] > 0].sort_values("pct_pn", ascending=False).reset_index(drop=True)
-    rubros_pdf = resumen
-    notas_pdf.append(f"Cartera al {formato.fecha(e['fecha_cartera'])} · patrimonio {formato.entero(e['patrimonio'])} {e['moneda']}")
-    marcas = [PALETA[i] if i < len(PALETA) else GRIS for i in range(len(resumen))]
-    etiquetas = {r: f"{m[0]} {r} · {formato.numero(p)}%"
-                 for m, r, p in zip(marcas, resumen["categoria_resumen"], resumen["pct_pn"])}
-    with g1:
-        # Streamlit no deja tocar porciones de una torta: los rubros se eligen con los botones de abajo.
-        elegidos = [r for r in (st.session_state.get(f"rubros_{codigo}") or []) if r in etiquetas]
-        rubros_sel = tuple(elegidos)
-        colores = [m[1] if (not elegidos or r in elegidos) else m[1] + "40"
-                   for m, r in zip(marcas, resumen["categoria_resumen"])]
-        def armar_torta():
-            fig = go.Figure(go.Pie(labels=resumen["categoria_resumen"], values=resumen["pct_pn"], hole=0.4, sort=False,
-                                   marker=dict(colors=colores),
-                                   pull=[0.08 if r in elegidos else 0 for r in resumen["categoria_resumen"]]))
-            fig.update_layout(title="Por rubro", margin=dict(t=50, b=10))
-            return formato.plotly_es(fig)
-        st.plotly_chart(memorizar("ficha_torta", armar_torta, codigo, rubros_sel), width="stretch")
-    det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
-    det = det[det["pct_pn"] > 0].sort_values("pct_pn")
-    g2.plotly_chart(memorizar("ficha_barras", lambda: formato.plotly_es(px.bar(
-        det, x="pct_pn", y="categoria_detallada", orientation="h", title="Por rubro, moneda e indexación (% del PN)",
-        labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), width="stretch")
-    st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
-             list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
-    if not parcial:
-        st.caption(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio. Se muestran aparte porque restan.")
-        notas_pdf.append(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio.")
-    dif = 100 - float(cart["pct_pn"].sum())
-    if abs(dif) > 0.05:
-        st.caption(f"Las líneas suman {formato.numero(100 - dif)}%: la diferencia de {formato.numero(dif)} puntos es "
-                   "redondeo de la fuente.")
-    filtrada = calculos.filtrar_por_rubros(activos, elegidos)
-    top = filtrada[filtrada["categoria_resumen"] != "Sin detalle"].sort_values("pct_pn", ascending=False).head(10)
-    st.markdown("**10 mayores tenencias**" + (f" de {', '.join(elegidos)}" if elegidos else ""))
-    top_pdf = formato.tabla(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
-        columns={"instrumento": "Instrumento", "pct_pn": "% del PN", "categoria_detallada": "Categoría"}),
-        numeros={"% del PN": 2})
-    mostrar_tabla(top_pdf, hide_index=True, width="stretch")
-    with st.expander("Cartera completa"):
-        mostrar_edicion_clasificacion(
-            calculos.filtrar_por_rubros(cart, elegidos),
-            puntual.get('clasificacion') if puntual is not None else vista, codigo, e['fecha_cartera'])
+    # ───────── Cartera ─────────
+with datos.seccion_disponible():
+    st.subheader("Cartera semanal")
+    enc = datos.cartera_encabezado(codigo, vista) if seguido else pd.DataFrame()
+    cart = datos.cartera(codigo, vista) if seguido else pd.DataFrame()
+    if puntual is not None:
+        enc, cart = puntual["encabezado"], puntual["cartera"]
+    if not seguido and puntual is None:
+        st.info(filtros.AVISO_NO_SEGUIDO)
+    elif enc.empty or cart.empty:
+        st.info("Todavía no hay cartera cargada para este fondo.")
+    else:
+        e = enc.iloc[0]
+        parcial = calculos.leyenda_cartera(e.get('fuente', 'cnv'))
+        if parcial:
+            st.caption(parcial)
+            notas_pdf.append(parcial)
+        st.caption(f"Cartera al {formato.fecha(e['fecha_cartera'])} · patrimonio {formato.entero(e['patrimonio'])} "
+                   f"{e['moneda']} · {int(e['instrumentos'])} líneas")
+        if int(e["sin_clasificar"]):
+            st.warning(f"{int(e['sin_clasificar'])} línea(s) sin clasificar ({formato.numero(e['pct_sin_clasificar'])}% del PN).")
+        activos = cart[cart["categoria_resumen"] != "Pasivos"]
+        pasivos = cart[cart["categoria_resumen"] == "Pasivos"]["pct_pn"].sum()
+        g1, g2 = st.columns(2)
+        resumen = activos.groupby("categoria_resumen", as_index=False)["pct_pn"].sum()
+        resumen = resumen[resumen["pct_pn"] > 0].sort_values("pct_pn", ascending=False).reset_index(drop=True)
+        rubros_pdf = resumen
+        notas_pdf.append(f"Cartera al {formato.fecha(e['fecha_cartera'])} · patrimonio {formato.entero(e['patrimonio'])} {e['moneda']}")
+        marcas = [PALETA[i] if i < len(PALETA) else GRIS for i in range(len(resumen))]
+        etiquetas = {r: f"{m[0]} {r} · {formato.numero(p)}%"
+                     for m, r, p in zip(marcas, resumen["categoria_resumen"], resumen["pct_pn"])}
+        with g1:
+            # Streamlit no deja tocar porciones de una torta: los rubros se eligen con los botones de abajo.
+            elegidos = [r for r in (st.session_state.get(f"rubros_{codigo}") or []) if r in etiquetas]
+            rubros_sel = tuple(elegidos)
+            colores = [m[1] if (not elegidos or r in elegidos) else m[1] + "40"
+                       for m, r in zip(marcas, resumen["categoria_resumen"])]
+            def armar_torta():
+                fig = go.Figure(go.Pie(labels=resumen["categoria_resumen"], values=resumen["pct_pn"], hole=0.4, sort=False,
+                                       marker=dict(colors=colores),
+                                       pull=[0.08 if r in elegidos else 0 for r in resumen["categoria_resumen"]]))
+                fig.update_layout(title="Por rubro", margin=dict(t=50, b=10))
+                return formato.plotly_es(fig)
+            st.plotly_chart(memorizar("ficha_torta", armar_torta, codigo, rubros_sel), width="stretch")
+        det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
+        det = det[det["pct_pn"] > 0].sort_values("pct_pn")
+        g2.plotly_chart(memorizar("ficha_barras", lambda: formato.plotly_es(px.bar(
+            det, x="pct_pn", y="categoria_detallada", orientation="h", title="Por rubro, moneda e indexación (% del PN)",
+            labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), width="stretch")
+        st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
+                 list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
+        if not parcial:
+            st.caption(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio. Se muestran aparte porque restan.")
+            notas_pdf.append(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio.")
+        dif = 100 - float(cart["pct_pn"].sum())
+        if abs(dif) > 0.05:
+            st.caption(f"Las líneas suman {formato.numero(100 - dif)}%: la diferencia de {formato.numero(dif)} puntos es "
+                       "redondeo de la fuente.")
+        filtrada = calculos.filtrar_por_rubros(activos, elegidos)
+        top = filtrada[filtrada["categoria_resumen"] != "Sin detalle"].sort_values("pct_pn", ascending=False).head(10)
+        st.markdown("**10 mayores tenencias**" + (f" de {', '.join(elegidos)}" if elegidos else ""))
+        top_pdf = formato.tabla(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
+            columns={"instrumento": "Instrumento", "pct_pn": "% del PN", "categoria_detallada": "Categoría"}),
+            numeros={"% del PN": 2})
+        mostrar_tabla(top_pdf, hide_index=True, width="stretch")
+        with st.expander("Cartera completa"):
+            mostrar_edicion_clasificacion(
+                calculos.filtrar_por_rubros(cart, elegidos),
+                puntual.get('clasificacion') if puntual is not None else vista, codigo, e['fecha_cartera'])
 
 mostrar_cambios_cartera(codigo)
 
 # ───────── Hechos relevantes ─────────
-st.subheader("Hechos relevantes")
-h = datos.hechos(codigo)
-if h.empty:
-    st.info("Sin hechos relevantes registrados.")
-else:
-    tipos = sorted(t for t in h["tipo"].unique() if t)
-    filtro = st.multiselect("Filtrar por tipo", tipos)
-    if filtro:
-        h = h[h["tipo"].isin(filtro)]
-    mostrar_tabla(formato.tabla(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
-                                                 "link": "Documento"}), fechas=["Fecha"]),
-                 hide_index=True, width="stretch",
-                 column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})
+with datos.seccion_disponible():
+    st.subheader("Hechos relevantes")
+    h = datos.hechos(codigo)
+    if h.empty:
+        st.info("Sin hechos relevantes registrados.")
+    else:
+        tipos = sorted(t for t in h["tipo"].unique() if t)
+        filtro = st.multiselect("Filtrar por tipo", tipos)
+        if filtro:
+            h = h[h["tipo"].isin(filtro)]
+        mostrar_tabla(formato.tabla(h.rename(columns={"fecha": "Fecha", "tipo": "Tipo", "descripcion": "Descripción",
+                                                     "link": "Documento"}), fechas=["Fecha"]),
+                     hide_index=True, width="stretch",
+                     column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})
 
 # El PDF recibe los mismos datos seleccionados y formateados que la pantalla.
 rapidez.pdf_a_pedido(
