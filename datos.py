@@ -1017,7 +1017,7 @@ def _limpiar_comunes():
         _ULTIMOS_CAMBIOS.clear()
 
 
-def consultar(sql, params=None):
+def consultar(sql, params=None, registrar=True):
     """Clave estable entre pantallas; el observador no participa en el hash.
 
     No normalizar SQL (puede contener literales); sí tipos escalares numpy y
@@ -1036,7 +1036,8 @@ def consultar(sql, params=None):
     fallo = []
     params = canonico(params)
     with _CERROJO_COMUNES:
-        _CONSULTAS_COMUNES[(sql, repr(params))] = (sql, params)
+        if registrar:  # A pedido (historia por fondo): no entra al refresco masivo.
+            _CONSULTAS_COMUNES[(sql, repr(params))] = (sql, params)
         version = _VERSION_COMUN
     # psycopg necesita listas para los parámetros ANY; mantenerlas en SQL.
     try:
@@ -1198,7 +1199,7 @@ def _historia_fondo_comun(version, codigo, _fallo=None):
         return completa[completa.codigo_cafci.isin(codigos)].copy()
     return consultar('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
                      'from valores_diarios_ultima v join clases c using (codigo_cafci) '
-                     'where c.codigo_cnv = %s order by v.fecha', (codigo,))
+                     'where c.codigo_cnv = %s order by v.fecha', (codigo,), registrar=False)
 
 
 def _fondos_de_clases(codigos, version):
