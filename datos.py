@@ -1196,10 +1196,9 @@ def _historia_fondo_comun(version, codigo, _fallo=None):
         clases = _indice_clases_comunes(version).get(str(codigo))
         codigos = [] if clases is None else clases.codigo_cafci
         return completa[completa.codigo_cafci.isin(codigos)].copy()
-    # A pedido: no registrarla además para el refresco masivo, que ya carga _serie_comun.
-    return _leer_comun_disponible('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
+    return consultar('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
                      'from valores_diarios_ultima v join clases c using (codigo_cafci) '
-                     'where c.codigo_cnv = %s order by v.fecha', (codigo,), [], version)
+                     'where c.codigo_cnv = %s order by v.fecha', (codigo,))
 
 
 def _fondos_de_clases(codigos, version):
