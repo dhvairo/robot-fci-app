@@ -69,12 +69,16 @@ def secciones(tabla, fondos=None):
             sub = f"Composición de cartera según la fecha de cada fondo (se indica en la tabla) · {FUENTE}"
         else:
             sub = f"Composición de cartera (sin fecha disponible) · {FUENTE}"
+        parcial = calculos.leyenda_cartera(t.get('_fuente', []))
+        if parcial:
+            sub = sub.replace(FUENTE, 'Fuentes: CNV / CAFCI según cada fondo') + ' · ' + parcial
         fondos = []
         for _, f in t.iterrows():
             rubros = rubros_principales(f)
             fondos.append({
                 "nombre": f["Fondo"], "rubros": rubros, "idea": f["_idea"], "idea_pdf": f["_idea_pdf"],
                 "fecha": formato.fecha(f["Cartera al"]) if distintas else None,
+                "fuente": f.get("_fuente", "cnv"),
                 "etiqueta": "\n".join([f["Fondo"]] + [f"{i}) {r}" for i, r in enumerate(rubros, start=1)])})
         out.append({"clave": clave, "titulo": f"{TITULO_BASE} {texto}", "subtitulo": sub, "aclaracion": ACLARACION,
                     "titulo_torta": f"Fondos en {texto} — dos principales rubros por fondo", "fondos": fondos,

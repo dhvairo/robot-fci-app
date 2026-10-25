@@ -382,6 +382,10 @@ elif enc.empty or cart.empty:
     st.info("Todavía no hay cartera cargada para este fondo.")
 else:
     e = enc.iloc[0]
+    parcial = calculos.leyenda_cartera(e.get('fuente', 'cnv'))
+    if parcial:
+        st.caption(parcial)
+        notas_pdf.append(parcial)
     st.caption(f"Cartera al {formato.fecha(e['fecha_cartera'])} · patrimonio {formato.entero(e['patrimonio'])} "
                f"{e['moneda']} · {int(e['instrumentos'])} líneas")
     if int(e["sin_clasificar"]):
@@ -416,14 +420,15 @@ else:
         labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), width="stretch")
     st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
              list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
-    st.caption(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio. Se muestran aparte porque restan.")
-    notas_pdf.append(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio.")
+    if not parcial:
+        st.caption(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio. Se muestran aparte porque restan.")
+        notas_pdf.append(f"Pasivos (implícitos): {formato.numero(pasivos)}% del patrimonio.")
     dif = 100 - float(cart["pct_pn"].sum())
     if abs(dif) > 0.05:
         st.caption(f"Las líneas suman {formato.numero(100 - dif)}%: la diferencia de {formato.numero(dif)} puntos es "
-                   "redondeo de la CNV (cada renglón viene redondeado a 2 decimales).")
+                   "redondeo de la fuente.")
     filtrada = calculos.filtrar_por_rubros(activos, elegidos)
-    top = filtrada.sort_values("pct_pn", ascending=False).head(10)
+    top = filtrada[filtrada["categoria_resumen"] != "Sin detalle"].sort_values("pct_pn", ascending=False).head(10)
     st.markdown("**10 mayores tenencias**" + (f" de {', '.join(elegidos)}" if elegidos else ""))
     top_pdf = formato.tabla(top[["instrumento", "pct_pn", "categoria_detallada"]].rename(
         columns={"instrumento": "Instrumento", "pct_pn": "% del PN", "categoria_detallada": "Categoría"}),

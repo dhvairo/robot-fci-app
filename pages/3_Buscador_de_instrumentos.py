@@ -18,6 +18,9 @@ st.title("Buscador de instrumentos")
 st.caption("Busca en la última cartera semanal disponible de los fondos seleccionados. Ejemplos: YPF, Pampa, Boncer, Megabono, Cheque.")
 
 catalogo = filtros.situacion(datos.fondos_ficha(incluir_no_seguidos=True), "buscador_situacion", "Seguidos", inicial=inicial_seguimiento)
+leyenda = calculos.leyenda_cartera(catalogo.get('fuente_cartera', []))
+if leyenda:
+    st.caption(leyenda)
 st.caption("Los fondos sin cartera disponible no aportan resultados a la búsqueda.")
 texto = st.text_input("Instrumento (parte del nombre)", placeholder="YPF")
 if len(texto.strip()) < 2:

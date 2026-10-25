@@ -1,4 +1,4 @@
-﻿orden;rubro_cnv;patron;categoria_resumen;categoria_detallada;moneda;indexacion;nota
+orden;rubro_cnv;patron;categoria_resumen;categoria_detallada;moneda;indexacion;nota
 10;disponibilidades;;Disponibilidades;Disponibilidades {mon};fondo;;Moneda del fondo (la ficha no abre las disponibilidades)
 11;otros activos;;Otros activos;Otros activos;fondo;;
 12;pasivos;;Pasivos;Pasivos;fondo;;Se muestra aparte de los 13 rubros para que la cartera sume 100
@@ -26,3 +26,34 @@
 50;;^on ;ON;ON {moneda};auto;;La CNV no informa tasa fija, variable o ajustable
 51;dolar;^bc ;Bono corporativo;Bono corporativo USD;USD;;
 52;dolar;^(ecopetrol|yinson|mv\d+ capital);Bono corporativo;Bono corporativo USD;USD;;Emisores corporativos sin prefijo (Ecopetrol, Yinson, MV24 Capital)
+1;sin detalle;^resto de activos$;Sin detalle;Sin detalle;;;CAFCI parcial. No repartir ni estimar
+100;cafci;^(bono del tesoro nacional|bonte|boncer|letra|lecap|lelink|lede|lecer).*\b(usd|dolar estadounidense)\b;Deuda soberana;Soberano USD Argentina;USD;;Moneda explícita
+101;cafci;tzx|dicp|^(boncer|bono boncer|lecer)|^(bono del tesoro nacional|letra).*\bcer\b;Deuda soberana;Soberano ARS CER;ARS;CER;
+102;cafci;^lelink|^(letra|bono del tesoro nacional).*dolar linked;Deuda soberana;Soberano ARS dólar linked;ARS;dólar linked;
+103;cafci;^(lecap|lede)\b;Deuda soberana;Soberano ARS;ARS;;
+104;cafci;^(bono del tesoro nacional|bonte|letra)\b;Deuda soberana;Soberano (moneda no informada);;;Sin inferir moneda
+105;cafci;^(cheque|echeq)\b;Cheques;Cheques ARS;ARS;;
+110;cafci;^pagare\b.*(usd|u\$s|dolares);Pagaré;Pagaré USD;USD;;
+111;cafci;^pagare\b.*(pesos|ars);Pagaré;Pagaré ARS;ARS;;
+112;cafci;^pagare\b;Pagaré;Pagaré (moneda no informada);;;
+113;cafci;^caucion\b.*(usd|u\$s|dolares);Caución;Caución USD;USD;;
+114;cafci;^caucion\b.*(pesos|ars);Caución;Caución ARS;ARS;;
+115;cafci;^caucion\b;Caución;Caución (moneda no informada);;;
+116;cafci;^(plazo fijo|pzo fi)\b.*(usd|u\$s|dolares);Plazo fijo;Plazo fijo USD;USD;;
+117;cafci;^(plazo fijo|pzo fi)\b.*(pesos|ars);Plazo fijo;Plazo fijo ARS;ARS;;
+118;cafci;^(plazo fijo|pzo fi)\b;Plazo fijo;Plazo fijo (moneda no informada);;;
+119;cafci;^(on|obligacion(es)? negociable(s)?)\b.*(usd|u\$s|dolares);ON;ON USD;USD;;
+120;cafci;^(on|obligacion(es)? negociable(s)?)\b.*(pesos|ars);ON;ON ARS;ARS;;
+121;cafci;^(on|obligacion(es)? negociable(s)?)\b;ON;ON (moneda no informada);;;
+122;cafci;^cedear.*(usd|u\$s|dolares);Acciones;CEDEAR USD;USD;;
+123;cafci;^cedear.*(pesos|ars);Acciones;CEDEAR ARS;ARS;;
+124;cafci;^cedear;Acciones;CEDEAR (moneda no informada);;;
+125;cafci;^fci\b.*(usd|u\$s|dolares);FCI;FCI USD;USD;;
+126;cafci;^fci\b.*(pesos|ars);FCI;FCI ARS;ARS;;
+127;cafci;^fci\b;FCI;FCI (moneda no informada);;;
+128;cafci;^(fut|futuro)\b.*(usd|u\$s|dolares);Futuros;Futuros USD;USD;;
+129;cafci;^(fut|futuro)\b.*(pesos|ars);Futuros;Futuros ARS;ARS;;
+130;cafci;^(fut|futuro)\b;Futuros;Futuros (moneda no informada);;;
+131;cafci;^disponibilidades\b.*(usd|u\$s|dolares);Disponibilidades;Disponibilidades USD;USD;;
+132;cafci;^disponibilidades\b.*(pesos|ars);Disponibilidades;Disponibilidades ARS;ARS;;
+133;cafci;^disponibilidades\b;Disponibilidades;Disponibilidades (moneda no informada);;;

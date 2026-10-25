@@ -31,7 +31,7 @@ st.set_page_config(page_title="Informe descriptivo", page_icon="📈", layout="w
 acceso.requerir()
 inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
 st.title("Informe descriptivo")
-st.caption("Composición de la última cartera disponible de los fondos seleccionados (fuente: CNV).")
+st.caption("Composición de la última cartera disponible de los fondos seleccionados (fuente indicada en cada cartera).")
 st.button("Restablecer", on_click=filtros.restablecer_informe, args=(st.session_state,))
 transferencia = st.session_state.get(calculos.SELECCION_INFORME, [])
 # Un nuevo pase abre el modo comparados; las siguientes corridas conservan los controles propios.
@@ -80,7 +80,10 @@ if len(fechas) == 1:
 else:
     st.subheader("Resumen de carteras de FCI: composición por tipo de activo")
     st.info("Los fondos tienen carteras de fechas distintas: la fecha de cada uno está en la columna \"Cartera al\".")
-st.caption("Fuente: CNV, Composición Semanal de Cartera. % sobre patrimonio neto, calculados desde cada cartera.")
+st.caption("% sobre patrimonio neto, calculados desde cada cartera.")
+leyenda = calculos.leyenda_cartera(tabla.get('_fuente', []))
+if leyenda:
+    st.caption(leyenda)
 columnas = calculos.columnas_resumen(tabla)
 porcentajes = [c for c in columnas if c not in ("Patrimonio neto",) and (
     c in {calculos.ETIQUETA_CATEGORIA.get(k, k) for k in calculos.CATEGORIAS_RESUMEN} or c == calculos.AJUSTE

@@ -19,7 +19,7 @@ RUTA_REGLAS = Path(__file__).with_name("reglas_clasificacion.csv")
 EQUIVALENCIAS_GERENTES = json.loads(
     Path(__file__).with_name("equivalencias_gerentes.json").read_text(encoding="utf-8"))
 SIN_CLASIFICAR = "sin clasificar"
-NO_CUENTAN = {"Pasivos", SIN_CLASIFICAR}
+NO_CUENTAN = {"Pasivos", SIN_CLASIFICAR, "Sin detalle"}
 TOLERANCIA_CAFCI = Decimal("0.01")
 MAX_HUECO_DIAS = 10
 CAMPOS = ["dias_7", "dias_30", "mes", "anio", "meses_12"]
@@ -204,7 +204,8 @@ def _moneda(regla, rubro, moneda_fondo):
 def clasificar_linea(detalle, rubro, moneda_fondo, reglas):
     """Devuelve un dict con categoria_resumen, categoria_detallada, moneda, indexacion, regla."""
     d, rb = normalizar(detalle), normalizar(rubro)
-    for r in reglas:
+    candidatas = sorted(reglas, key=lambda r: (r["_rubro"] != "cafci", r["orden"])) if rb == "cafci" else reglas
+    for r in candidatas:
         if r["_rubro"] and r["_rubro"] not in rb:
             continue
         if r["_re"] and not r["_re"].search(d):
@@ -212,6 +213,8 @@ def clasificar_linea(detalle, rubro, moneda_fondo, reglas):
         moneda = _moneda(r, rubro, moneda_fondo)
         if "{moneda}" in r["categoria_detallada"] or "{mon}" in r["categoria_detallada"]:
             if not moneda:
+                if rb == 'cafci':
+                    continue  # CAFCI sin moneda: probar reglas explícitas sin inventarla.
                 break  # no se puede saber la moneda: queda sin clasificar
         pais = re.sub(r"(?i)^participaciones accionarias\s*", "", rubro).strip()
         detallada = r["categoria_detallada"].format(

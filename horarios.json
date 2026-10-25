@@ -2,7 +2,7 @@
   "corridas": [
     {
       "flujo": "robot_carteras.yml",
-      "nombre": "Robot de carteras (CNV)",
+      "nombre": "Robot de carteras (CAFCI; hechos CNV)",
       "cron_utc": "0 13 * * *",
       "hora_ar": "10:00",
       "dias_ar": [

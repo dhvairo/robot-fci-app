@@ -544,7 +544,7 @@ def _vista_carteras_sin_cache():
 
 _VISTAS_ORGANIZACION = globals().get('_VISTAS_ORGANIZACION', {})
 _CERROJO_VISTAS = globals().get('_CERROJO_VISTAS', Lock())
-_COLUMNAS_HUELLA = ('codigo_cnv', 'fecha_cartera', 'orden', 'instrumento', 'pct_pn', 'rubro_cnv',
+_COLUMNAS_HUELLA = ('fuente_cartera', 'codigo_cnv', 'fecha_cartera', 'orden', 'instrumento', 'pct_pn', 'rubro_cnv',
                     'categoria_resumen', 'categoria_detallada', 'moneda', 'indexacion', 'sin_clasificar')
 
 
@@ -636,7 +636,7 @@ def _fuente_carteras_comun():
     """Fuente pública de la vista; la composición privada siempre queda fuera."""
     return consultar(
         "select c.*, c.rubro_cnv as rubro_cnv_original, "
-        "c.instrumento as instrumento_original, h.moneda as moneda_del_fondo_original "
+        "c.instrumento as instrumento_original, h.moneda as moneda_del_fondo_original, coalesce(to_jsonb(h)->>'fuente', 'cnv') as fuente_cartera "
         "from carteras_ultima c join carteras_fechas h "
         "using (codigo_cnv, fecha_cartera) order by c.codigo_cnv, c.orden")
 
@@ -998,8 +998,11 @@ def _fondos_ficha_comunes(incluir_no_seguidos=False):
         "and p.marca_estado = '') as patrimonio_neto, "
         "(select max(p.fecha_dato) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
         "and p.marca_estado = '') as fecha_valores, "
-        "(select max(x.fecha_cartera) from carteras_fechas x where x.codigo_cnv = f.codigo_cnv) as fecha_cartera "
-        "from fondos f left join fondos_tenencias t on t.codigo_cnv=f.codigo_cnv and t.posicion=1 "
+        "h.fecha_cartera, h.fuente_cartera "
+        "from fondos f left join lateral (select x.fecha_cartera, "
+        "coalesce(to_jsonb(x)->>'fuente', 'cnv') as fuente_cartera from carteras_fechas x "
+        "where x.codigo_cnv=f.codigo_cnv order by x.fecha_cartera desc limit 1) h on true "
+        "left join fondos_tenencias t on t.codigo_cnv=f.codigo_cnv and t.posicion=1 "
         "left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
         "left join sociedades d on d.tipo = 'depositaria' and d.codigo = f.codigo_depositaria "
         + ("" if incluir_no_seguidos else "where f.seguido ") + "order by f.nombre")
@@ -1008,7 +1011,7 @@ def _fondos_ficha_comunes(incluir_no_seguidos=False):
 def _cabeceras_carteras_comunes():
     """Misma lectura para el resumen legado y la vista efectiva U110."""
     return consultar(
-        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio from carteras_fechas x "
+        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio, coalesce(to_jsonb(x)->>'fuente', 'cnv') as fuente from carteras_fechas x "
         "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
         "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
 
@@ -1176,7 +1179,8 @@ def _cartera_comun(codigo_cnv):
 
 def _cartera_encabezado_comun(codigo_cnv):
     return consultar("select fecha_cartera, moneda, patrimonio, instrumentos, sin_clasificar, "
-                     "pct_sin_clasificar, controles_ok from carteras_fechas where codigo_cnv = %s "
+                     "pct_sin_clasificar, controles_ok, coalesce(to_jsonb(carteras_fechas)->>'fuente', 'cnv') as fuente "
+                     "from carteras_fechas where codigo_cnv = %s "
                      "order by fecha_cartera desc limit 1", (codigo_cnv,))
 
 

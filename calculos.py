@@ -745,6 +745,16 @@ def _texto(x):
     return formato.texto_o_guion(x)
 
 
+LEYENDA_CAFCI = "Cartera parcial (CAFCI): principales tenencias + resto sin detalle"
+
+
+def leyenda_cartera(fuentes):
+    """La fuente viaja con la lectura común; no agrega consultas ni cachés."""
+    if isinstance(fuentes, str):
+        fuentes = [fuentes]
+    return LEYENDA_CAFCI if any(f == 'cafci' for f in fuentes if isinstance(f, str)) else ''
+
+
 def cabecera_fondo(f):
     """Datos de la cabecera de la ficha como [(etiqueta, valor)]; ningún valor queda vacío (se muestra '—').
 
@@ -757,7 +767,7 @@ def cabecera_fondo(f):
     if not formato._es_nulo(f.get("fecha_valores")):
         fuentes.append(f"CAFCI (valores al {formato.fecha(f['fecha_valores'])})")
     if not formato._es_nulo(f.get("fecha_cartera")):
-        fuentes.append(f"CNV (cartera al {formato.fecha(f['fecha_cartera'])})")
+        fuentes.append(f"{'CAFCI parcial' if f.get('fuente_cartera') == 'cafci' else 'CNV'} (cartera al {formato.fecha(f['fecha_cartera'])})")
     datos = [
         ("Cartera al", formato.fecha(f.get("fecha_cartera"))),
         ("Gerente", _texto(f.get("gerente"))),
@@ -841,7 +851,14 @@ def resumen_masivo(fondos, carteras, sumas, tenencias):
                 "Patrimonio neto": None if c is None else _pct(c["patrimonio"])}
         for cat in CATEGORIAS_RESUMEN:
             fila[ETIQUETA_CATEGORIA.get(cat, cat)] = cats.get(cat, 0.0)
-        fila[AJUSTE] = round(100 - sum(cats.get(cat, 0.0) for cat in CATEGORIAS_RESUMEN), 4)
+        for extra in ('Sin detalle', 'Futuros', 'sin clasificar'):
+            if any(extra in valores for valores in por_cat.values()):
+                fila[extra] = cats.get(extra, 0.0)
+        fila['_fuente'] = 'cnv' if c is None else c.get('fuente', 'cnv')
+        if 'fuente' in carteras and carteras.fuente.eq('cafci').any():
+            fila['Fuente'] = 'CAFCI parcial' if fila['_fuente'] == 'cafci' else 'CNV'
+        fila[AJUSTE] = (None if fila['_fuente'] == 'cafci' else
+                        round(100 - sum(cats.get(cat, 0.0) for cat in CATEGORIAS_RESUMEN), 4))
         for pos, (col, col_pct) in enumerate(COLUMNAS_TENENCIA, start=1):
             nombre, pct = ten.get(cod, {}).get(pos, (formato.VACIO, None))
             fila[col], fila[col_pct] = nombre, pct
