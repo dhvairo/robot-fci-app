@@ -1,4 +1,5 @@
 """Metadatos de Actions, solo lectura; caché compartida entre sesiones por 600 s."""
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from threading import Lock
@@ -10,7 +11,8 @@ import streamlit as st
 REPO = "dhvairo/robot-fci"
 TTL = 600
 ARGENTINA = timezone(timedelta(hours=-3))
-FLUJOS = {"diario": "robot_diario.yml", "carteras": "robot_carteras.yml"}
+FLUJOS = {"diario": "robot_diario.yml", "carteras": "robot_carteras.yml",
+          "hechos CNV": "robot_hechos_cnv.yml"}
 
 
 def interpretar(run):
@@ -79,7 +81,10 @@ class CacheOperacion:
         clave = sha256((token or "").encode("utf-8")).digest()
         with self.lock:
             if self.clave != clave or reloj() >= self.vence:
-                filas = {nombre: consultar_flujo(flujo, token) for nombre, flujo in FLUJOS.items()}
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    pendientes = {nombre: pool.submit(consultar_flujo, flujo, token)
+                                  for nombre, flujo in FLUJOS.items()}
+                    filas = {nombre: tarea.result() for nombre, tarea in pendientes.items()}
                 fecha = (ahora or datetime.now(timezone.utc)).astimezone(ARGENTINA)
                 self.resultado = {"flujos": filas, "consultado": fecha,
                                   "vence": fecha + timedelta(seconds=TTL)}
