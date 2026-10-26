@@ -238,8 +238,7 @@ def leer_complemento(codigo):
     return None
 
 
-def if not pendiente:
-    mostrar_tematica_sugerida(codigo, fondo, ficha, complemento):
+def mostrar_tematica_sugerida(codigo, fondo, ficha, complemento):
     if not ficha:
         return
     objetivo = next((d for d in ficha['datos'] if d['campo'] == 'objetivo_politica'), {})
@@ -301,10 +300,10 @@ puntual = None
 st.subheader(nombre)
 if st.session_state.get('_arranque_privado'):
     detalle = rapidez.preparar_fondo(codigo)
-    if not detalle.done():
+    if pendiente or not detalle.done():
         st.caption(f"Código CNV {codigo} · {fondo['estado']}")
         st.subheader("Clases")
-        mostrar_tabla(datos.clases_de_fondo(codigo), hide_index=True, width='stretch')
+        mostrar_tabla(formato.tabla(datos.clases_de_fondo(codigo), enteros=['codigo_cafci']), hide_index=True, width='stretch')
         rapidez.esperar_sin_consultas((detalle,))
         st.stop()
     rapidez._esperar(detalle)

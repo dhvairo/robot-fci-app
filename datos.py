@@ -697,10 +697,9 @@ def fondos_ficha(incluir_no_seguidos=False, progresivo=False):
         or (seguimiento is not None and not seguimiento[2].done()))
     if pendientes:
         salida = _fondos_ficha_comunes(True).copy()
-        if privada:
-            salida['seguido'] = False
-            for campo in ('descripcion_breve', 'tematica', 'tematica_provisoria'):
-                salida[campo] = None
+        salida['seguido'] = False
+        for campo in ('descripcion_breve', 'tematica', 'tematica_provisoria'):
+            salida[campo] = None
         salida.attrs['pendiente'] = True
         salida.attrs['clasificacion'] = VistaCompartida(estado='pendiente')
         return salida
