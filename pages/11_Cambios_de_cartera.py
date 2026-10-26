@@ -1,4 +1,4 @@
-"""Cambios de cartera: selecci?n independiente y comparaci?n de snapshots guardados."""
+"""Cambios de cartera: selección independiente y comparación de snapshots guardados."""
 import streamlit as st
 import recarga
 recarga.al_dia()
@@ -8,7 +8,7 @@ import datos
 import formato
 import pandas as pd
 
-ETIQUETAS = dict(zip(calculos.CAMPOS_CLASIFICACION, ('Rubro', 'Categor?a', 'Moneda', 'Indexaci?n')))
+ETIQUETAS = dict(zip(calculos.CAMPOS_CLASIFICACION, ('Rubro', 'Categoría', 'Moneda', 'Indexación')))
 
 def mostrar_cambios_cartera(codigo):
     with st.spinner('Leyendo carteras guardadas…'):
@@ -74,7 +74,7 @@ acceso.requerir()
 st.title("Cambios de cartera")
 todos = datos.fondos_ficha(incluir_no_seguidos=True).sort_values("nombre", key=lambda s: s.str.casefold())
 codigos = todos["codigo_cnv"].tolist()
-# Desvincular la selecci?n de Ficha de su widget para conservarla entre p?ginas.
+# Desvincular la selección de Ficha de su widget para conservarla entre páginas.
 ficha = st.session_state.get("ficha_fondo")
 if ficha is not None:
     st.session_state["ficha_fondo"] = ficha
@@ -85,9 +85,9 @@ if st.session_state.get("cambios_fondo") not in codigos:
     st.session_state["cambios_fondo"] = None
 nombres = todos.set_index("codigo_cnv")["nombre"]
 codigo = st.selectbox("Fondo", codigos, index=None, key="cambios_fondo",
-                      placeholder="Eleg? un fondo",
-                      format_func=lambda c: f"{nombres.loc[c]} ? CNV {c}")
+                      placeholder="Elegí un fondo",
+                      format_func=lambda c: f"{nombres.loc[c]} · CNV {c}")
 if codigo is None:
-    st.info("Eleg? un fondo")
+    st.info("Elegí un fondo")
     st.stop()
 mostrar_cambios_cartera(int(codigo))
