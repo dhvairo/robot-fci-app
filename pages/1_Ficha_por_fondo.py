@@ -227,54 +227,34 @@ def mostrar_tabla(tabla, **opciones):
         st.dataframe(tabla, **opciones)
 
 
-def mostrar_ficha_unica(codigo, fondo):
-    st.subheader('Ficha Única')
-    if not st.toggle('Abrir Ficha Única', value=False, key=f'abrir_ficha_unica_{codigo}'):
-        return
+def leer_complemento(codigo):
     try:
         resultado = datos.ficha_unica(codigo)
+        return resultado.get('ficha')
     except datos.TopeLectura:
         st.warning('Se alcanzó el tope diario de lectura. Volvé a intentar mañana.')
-        return
     except datos.psycopg.Error:
         st.warning('No se pudo consultar la Ficha Única. Volvé a intentar más tarde.')
+    return None
+
+
+def mostrar_tematica_sugerida(codigo, fondo, ficha, complemento):
+    if not ficha:
         return
-    if resultado['estado'] == 'sin_permiso':
-        st.info('Ficha Única: falta habilitar la lectura (lo hace Claude)')
-        return
-    ficha = resultado['ficha']
-    if ficha is None:
-        st.info('Este fondo todavía no tiene Ficha Única cargada')
-        return
-    fuente = {'gerente': 'web del gerente', 'cafci': 'CAFCI'}.get(ficha['fuente'], 'no disponible en la ficha')
-    estado = {'leida': 'Leída', 'parcial': 'Parcial', 'no_legible': 'No legible'}[ficha['estado_lectura']]
-    st.caption(f"Ficha Única al {formato.fecha(ficha['fecha_referencia'])} · Fuente: {fuente} · {estado}")
-    if str(ficha.get('url') or '').startswith(('https://', 'http://')):
-        st.link_button('Ver documento de la Ficha Única', ficha['url'])
-    condiciones, honorarios, calificacion, tenencias = calculos.tablas_ficha_unica(ficha)
-    for titulo, tabla in (('Condiciones', condiciones), ('Honorarios por clase', honorarios),
-                           ('Calificación', calificacion), ('Principales tenencias según la ficha', tenencias)):
-        if titulo == 'Calificación' and tabla.empty:
-            continue
-        st.markdown(f'**{titulo}**')
-        if tabla.empty:
-            st.caption('no disponible en la ficha')
-        else:
-            st.dataframe(formato.tabla_ordenable(tabla), hide_index=True, width='stretch')
-    st.caption('Referencia: la cartera oficial es la de la CNV')
-    st.markdown('**Temática sugerida por la ficha**')
     objetivo = next((d for d in ficha['datos'] if d['campo'] == 'objetivo_politica'), {})
-    sugerencia = calculos.valor_dato_ficha(objetivo)
-    st.write(sugerencia)
-    if objetivo.get('estado') != 'leido' or sugerencia == 'no disponible en la ficha':
+    sugerencia = calculos.texto_complemento(objetivo)
+    if complemento['sugerencia']:
+        st.markdown(f"**Temática sugerida por la ficha:** {complemento['sugerencia']}")
+    if not sugerencia:
         return
     try:
         formulario = datos.formulario_tematica_ficha(codigo, fondo)
         if formulario is not None and st.button('Usar como temática', key=f'usar_tematica_ficha_{codigo}'):
-            datos.anotar_pedido(codigo, 'editar_tematica', idea=str(sugerencia), formulario=formulario)
+            datos.anotar_pedido(codigo, 'editar_tematica', idea=sugerencia, formulario=formulario)
             st.success('Pedido de temática anotado. Se aplicará en la próxima corrida del robot.')
     except (acceso.ErrorAcceso, calculos.ErrorSeguimiento, datos.ErrorPedido):
         st.caption('La temática se conserva. Podés revisarla en Sumar o quitar fondos.')
+
 
 
 def mostrar_cambios_cartera(codigo):
@@ -404,13 +384,28 @@ if puntual is not None:
     notas_pdf = [consulta_puntual.LEYENDA, *puntual["avisos"]]
 
 st.subheader(nombre)
-cab = calculos.cabecera_fondo(fondo.to_dict())
+ficha = leer_complemento(codigo)
+complemento = calculos.integrar_ficha_unica(fondo.to_dict(), ficha)
+cab = complemento['cabecera']
 for i in range(0, len(cab), 3):
     for col, (etiqueta, valor) in zip(st.columns(3), cab[i:i + 3]):
         col.markdown(f"**{etiqueta}**  \n{valor}")
 descripcion, idea = calculos.tematica(fondo.to_dict())
-st.markdown(f"**Descripción breve:** {descripcion}")
+st.markdown(f"**Descripción breve:** {complemento['descripcion']}")
 st.markdown(f"**Idea y temática:** {idea}")
+mostrar_tematica_sugerida(codigo, fondo, ficha, complemento)
+for etiqueta, valor in complemento['extras']:
+    st.markdown(f"**{etiqueta}:** {valor}")
+for aviso in complemento['avisos']:
+    st.caption(aviso)
+if not complemento['costos'].empty:
+    mostrar_tabla(complemento['costos'], hide_index=True, width='stretch')
+if ficha:
+    fuente = {'gerente': 'web del gerente', 'cafci': 'CAFCI'}.get(ficha['fuente'], '')
+    documento = ficha.get('url') or ''
+    enlace = f" · [Ver documento](<{documento}>)" if documento.startswith(('https://', 'http://')) else ''
+    st.caption(f"Datos complementados con la Ficha Única al {formato.fecha(ficha['fecha_referencia'])} · fuente: {fuente}{enlace}")
+aviso_rendimiento_ficha = st.empty()
 st.caption(f"Código CNV {codigo} · {fondo['estado']}")
 
 # ───────── Clases y rendimientos ─────────
@@ -456,7 +451,7 @@ with datos.seccion_disponible():
                     'No consideran distribución de utilidades.')
             st.caption(nota)
             notas_pdf.append(nota)
-            if not seguido:
+            if not seguido and ficha is None:
                 costos_pdf = calculos.costos_ficha(datos.foto_de_fondo(codigo))
                 mostrar_tabla(costos_pdf, hide_index=True, width="stretch")
             if revisar and seguido:
@@ -465,6 +460,9 @@ with datos.seccion_disponible():
 
             if seguido or puntual is not None:
                 historia = datos.serie(sel["codigo_cafci"]) if seguido else puntual["serie"]
+                if calculos.control_rendimientos_ficha(ficha, historia, sel):
+                    aviso_rendimiento_ficha.caption(
+                        f"Rendimiento de la Ficha Única no coincide con el cálculo al {formato.fecha(ficha['fecha_referencia'])[:5]}")
                 def armar_serie():
                     ser = historia.merge(sel[["codigo_cafci", "nombre"]], on="codigo_cafci")
                     ser = calculos.base_100(ser, ser["fecha"].min())
@@ -554,7 +552,6 @@ with datos.seccion_disponible():
                 puntual.get('clasificacion') if puntual is not None else vista, codigo, e['fecha_cartera'])
 
 mostrar_cambios_cartera(codigo)
-mostrar_ficha_unica(codigo, fondo)
 
 # ───────── Hechos relevantes ─────────
 with datos.seccion_disponible():

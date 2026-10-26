@@ -841,6 +841,201 @@ def tablas_ficha_unica(ficha):
     return [pd.DataFrame(filas) for filas in (condiciones, list(honorarios.values()), calificacion, tenencias)]
 
 
+def clase_de_nombre(nombre):
+    """Letra/sufijo explícito; nunca empareja una clase desconocida con todas."""
+    texto = str(nombre).strip()
+    coincidencia = re.search(r'\bclase\s+(.+)$', texto, re.I)
+    return coincidencia[1].strip() if coincidencia else texto
+
+
+def normalizar_complemento(valor):
+    """Equivalencias conservadoras para comparar fuentes, nunca para reemplazarlas."""
+    if formato._es_nulo(valor):
+        return ''
+    texto = re.sub(r'\s+', ' ', _sin_acentos(str(valor)).casefold()).strip()
+    if texto in ('', '—', '-', 'no disponible', 'no disponible en la ficha', 'dudoso'):
+        return ''
+    texto = {'pesos': 'ars', 'pesos argentinos': 'ars', '$': 'ars',
+             'dolares': 'usd', 'dolares estadounidenses': 'usd',
+             'corto': 'corto plazo', 'mediano': 'mediano plazo', 'largo': 'largo plazo',
+             'inmediato': 't+0', 'inmediata': 't+0', 'en el dia': 't+0',
+             'sin asignar': ''}.get(texto, texto)
+    plazo = re.fullmatch(r'(?:t\s*\+\s*(\d+)|(\d+) dias? habil(?:es)?|(\d+) horas?)', texto)
+    if plazo:
+        dias = plazo[1] or plazo[2]
+        if dias or int(plazo[3]) % 24 == 0:
+            return 't+' + str(int(dias) if dias else int(plazo[3]) // 24)
+    numero = re.sub(r'\s*(?:anual(?:es)?|p\.?a\.?)$', '', texto).replace('%', '').strip()
+    if re.fullmatch(r'[-+]?\d[\d.,]*', numero):
+        if ',' in numero:
+            numero = numero.replace('.', '').replace(',', '.')
+        elif '%' not in texto and re.fullmatch(r'[1-9]\d{0,2}(?:\.\d{3})+', numero):
+            numero = numero.replace('.', '')
+        try:
+            return str(float(numero))
+        except ValueError:
+            pass
+    return texto
+
+
+def texto_complemento(dato, campo=None):
+    """Solo valores seguros; números y fechas con formato argentino."""
+    if dato.get('estado') != 'leido':
+        return ''
+    valor = dato.get('valor_normalizado')
+    if formato._es_nulo(valor) or str(valor).strip() == '':
+        valor = dato.get('valor_literal')
+    if not normalizar_complemento(valor):
+        return ''
+    texto = str(valor).strip()
+    if re.fullmatch(r'\d{4}-\d{2}-\d{2}', texto):
+        return formato.fecha(texto)
+    if re.fullmatch(r'[-+]?\d+(?:\.\d+)?', texto):
+        n = float(texto)
+        texto = formato.entero(n) if n.is_integer() else formato.numero(n, 4).rstrip('0').rstrip(',')
+        if campo and (campo.startswith(('honorarios', 'comision', 'gastos'))):
+            texto += ' %'
+    texto = re.sub(r'\bdias\b', 'días', texto, flags=re.I)
+    texto = re.sub(r'\bdia\b', 'día', texto, flags=re.I)
+    texto = re.sub(r'\bhabiles\b', 'hábiles', texto, flags=re.I)
+    texto = re.sub(r'\bhabil\b', 'hábil', texto, flags=re.I)
+    def porcentaje(m):
+        numero = m[1].replace('.', '').replace(',', '.') if ',' in m[1] else m[1]
+        return formato.numero_corto(float(numero)) + ' %'
+    texto = re.sub(r'(\d+(?:[.,]\d+)*)\s*%', porcentaje, texto)
+    return texto
+
+
+def integrar_ficha_unica(fondo, ficha):
+    """Complementa la cabecera y los costos sin repetir ni sustituir datos propios."""
+    resultado = dict(cabecera=cabecera_fondo(fondo), extras=[], avisos=[],
+                     descripcion=tematica(fondo)[0], sugerencia='', costos=pd.DataFrame())
+    if not ficha:
+        return resultado
+    fecha = formato.fecha(ficha['fecha_referencia'])
+    mapa = {'gerente': 'Gerente', 'depositaria': 'Depositaria', 'moneda': 'Moneda',
+            'horizonte': 'Horizonte', 'clasificacion': 'Clasificación CNV'}
+    cabecera = dict(resultado['cabecera'])
+
+    def comparar(etiqueta, nuevo, anterior):
+        if normalizar_complemento(anterior) and normalizar_complemento(nuevo) != normalizar_complemento(anterior):
+            resultado['avisos'].append(
+                f'{etiqueta}: Ficha Única al {fecha} dice: {nuevo} (la app muestra: {anterior})')
+
+    permitidos = {'auditor', 'fecha_inicio', 'perfil', 'riesgo', 'plazo_rescate', 'monto_minimo',
+                  'calificacion', 'agencia', 'fecha_calificacion', 'benchmark'}
+    for d in ficha.get('datos', []):
+        campo = d['campo']
+        nuevo = texto_complemento(d, campo)
+        if not nuevo:
+            continue
+        if campo == 'objetivo_politica':
+            # Es una descripción complementaria; la temática editada se conserva.
+            if not normalizar_complemento(fondo.get('descripcion_breve')):
+                resultado['descripcion'] = nuevo
+            if normalizar_complemento(nuevo) not in {
+                    normalizar_complemento(resultado['descripcion']), normalizar_complemento(fondo.get('tematica'))}:
+                resultado['sugerencia'] = nuevo
+        elif campo in mapa:
+            etiqueta = mapa[campo]
+            anterior = cabecera.get(etiqueta, '')
+            if not normalizar_complemento(anterior):
+                cabecera[etiqueta] = nuevo
+            else:
+                comparar(etiqueta, nuevo, anterior)
+        elif campo in permitidos:
+            anterior = fondo.get(campo)
+            if campo == 'calificacion':
+                calificaciones = {str(c['calificacion']).strip() for c in ficha.get('clases', [])
+                                  if normalizar_complemento(c.get('calificacion'))}
+                if calificaciones:
+                    for calificacion in sorted(calificaciones):
+                        comparar(nombre_dato_ficha(campo), nuevo, calificacion)
+                    continue
+            if normalizar_complemento(anterior):
+                comparar(nombre_dato_ficha(campo), nuevo, anterior)
+            else:
+                resultado['extras'].append((nombre_dato_ficha(campo), nuevo))
+    resultado['cabecera'] = list(cabecera.items())
+    conceptos = {'honorarios_gerente': 'honorarios_sg', 'honorarios_depositaria': 'honorarios_sd',
+        'gastos_ordinarios': 'gastos_ordinarios', 'comision_suscripcion': 'comision_ingreso',
+        'comision_rescate': 'comision_rescate', 'comision_transferencia': 'comision_transferencia',
+        'honorarios_exito': 'honorarios_exito'}
+    # Cada clase conserva sus costos; los combinados de la ficha nunca se descomponen.
+    filas = {}
+    for c in ficha.get('clases', []):
+        clase = clase_de_nombre(c['nombre'])
+        fila = {'Clase': c['nombre']}
+        for campo in ('calificacion', 'marca_estado'):
+            if normalizar_complemento(c.get(campo)):
+                fila['Calificación' if campo == 'calificacion' else 'Estado CAFCI'] = str(c[campo])
+        for concepto, columna in conceptos.items():
+            valor = c.get(columna)
+            if not formato._es_nulo(valor):
+                fila[nombre_dato_ficha(concepto)] = texto_complemento(
+                    dict(estado='leido', valor_normalizado=valor), concepto)
+        filas[clase] = fila
+    for h in ficha.get('honorarios', []):
+        concepto, clase = h['concepto'], h['clase']
+        nuevo = texto_complemento(h, concepto)
+        if not nuevo:
+            continue
+        fila = filas.setdefault(clase, {'Clase': clase})
+        etiqueta = nombre_dato_ficha(concepto)
+        if etiqueta in fila:
+            comparar(f'{etiqueta} · {clase}', nuevo, fila[etiqueta])
+        else:
+            fila[etiqueta] = nuevo
+    if filas and any(len(f) > 1 for f in filas.values()):
+        resultado['costos'] = pd.DataFrame(filas.values()).fillna(formato.VACIO)
+    return resultado
+
+
+def control_rendimientos_ficha(ficha, historia, clases):
+    """Compara retornos directos al cierre de la ficha, sin lecturas adicionales.
+
+    Omite TNA, períodos desconocidos, cierres ausentes o historia insuficiente.
+    Devuelve las diferencias mayores a 0,05 puntos porcentuales.
+    """
+    if not ficha or historia.empty or clases.empty:
+        return []
+    cierre = pd.Timestamp(ficha['fecha_referencia'])
+    periodos = {'7 dias': pd.Timedelta(days=7), '1 mes': pd.Timedelta(days=30),
+                '90 dias': pd.Timedelta(days=90), '180 dias': pd.Timedelta(days=180),
+                '12 meses': pd.DateOffset(years=1),
+                'en el año': cierre - pd.Timestamp(cierre.year - 1, 12, 31)}
+    codigos = {clase_de_nombre(c['nombre']): c['codigo_cafci'] for c in clases.to_dict('records')}
+    avisos = []
+    for d in ficha.get('datos', []):
+        partes = d['campo'].split(':')
+        if len(partes) != 3 or partes[0] != 'rendimiento' or d.get('estado') != 'leido':
+            continue
+        _, clase, periodo = partes
+        valor = str(d.get('valor_normalizado') or '').removeprefix('Directo ').strip()
+        if clase not in codigos or periodo not in periodos or not re.fullmatch(r'-?\d+(?:\.\d+)?', valor):
+            continue
+        serie = historia[historia.codigo_cafci.eq(codigos[clase])].copy()
+        serie['fecha'] = pd.to_datetime(serie.fecha)
+        if 'patrimonio' in serie:
+            serie = serie[serie.patrimonio.ne(0)]
+        if 'marca_estado' in serie:
+            serie = serie[serie.marca_estado.fillna('').eq('')]
+        serie = serie[serie.cuotaparte.notna() & serie.cuotaparte.gt(0)]
+        serie = serie[serie.fecha.le(cierre)].sort_values('fecha')
+        if serie.empty or serie.iloc[-1].fecha != cierre:
+            continue
+        base = serie[serie.fecha.le(cierre - periodos[periodo])]
+        if base.empty or (cierre - periodos[periodo] - base.iloc[-1].fecha).days > 10:
+            continue
+        inicial, final = base.iloc[-1].cuotaparte, serie.iloc[-1].cuotaparte
+        if pd.isna(inicial) or pd.isna(final) or inicial <= 0 or final <= 0:
+            continue
+        diferencia = abs((float(final) / float(inicial) - 1) * 100 - float(valor))
+        if diferencia > 0.05 + 1e-9:
+            avisos.append((clase, periodo, diferencia))
+    return avisos
+
+
 def tematica(f):
     """(Descripción breve, Idea y temática) con la marca 'provisorio' si corresponde; '—' si falta."""
     marca = " (provisorio)" if f.get("tematica_provisoria") else ""

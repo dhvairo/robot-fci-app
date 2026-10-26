@@ -1389,6 +1389,11 @@ def ficha_unica(codigo_cnv):
     try:
         filas = _ejecutar("""
             select f.fecha_referencia, f.url, f.fuente, f.estado_lectura,
+              coalesce((select jsonb_agg(to_jsonb(c) || jsonb_build_object(
+                            'calificacion', p.calificacion, 'marca_estado', p.marca_estado) order by c.nombre)
+                        from clases c left join foto_clases p using (codigo_cafci)
+                        where c.codigo_cnv = f.codigo_cnv
+                        and c.vigente_hasta is null), '[]'::jsonb) as clases,
               coalesce((select jsonb_agg(to_jsonb(d) - 'ficha_id' order by d.campo)
                         from ficha_datos d where d.ficha_id = f.id), '[]'::jsonb) as datos,
               coalesce((select jsonb_agg(to_jsonb(h) - 'ficha_id' order by h.concepto, h.clase)
