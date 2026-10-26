@@ -788,6 +788,59 @@ def cabecera_fondo(f):
     return datos
 
 
+NOMBRES_FICHA_UNICA = {
+    'plazo_rescate': 'Plazo de rescate', 'moneda': 'Moneda', 'monto_minimo': 'Monto mínimo',
+    'riesgo': 'Riesgo', 'perfil': 'Perfil del inversor', 'objetivo_politica': 'Objetivo y política de inversión',
+    'patrimonio_neto': 'Patrimonio neto', 'clasificacion': 'Clasificación', 'horizonte': 'Horizonte de inversión',
+    'registro_cnv': 'Registro CNV', 'fecha_inicio': 'Inicio de operaciones', 'auditor': 'Auditor',
+    'correo': 'Correo de contacto', 'depositaria': 'Sociedad depositaria', 'gerente': 'Sociedad gerente',
+    'calificacion': 'Calificación', 'calificacion_y_benchmark': 'Calificación y referencia de rendimiento',
+    'benchmark': 'Referencia de rendimiento', 'rendimiento': 'Rendimiento',
+    'honorarios_gerente_y_depositaria': 'Honorarios de gerente y depositaria',
+    'honorarios_gerente': 'Honorarios de gerente', 'honorarios_depositaria': 'Honorarios de depositaria',
+    'comisiones_suscripcion_rescate_transferencia': 'Comisiones de suscripción, rescate y transferencia',
+    'comision_suscripcion': 'Comisión de suscripción', 'comision_rescate': 'Comisión de rescate',
+    'comision_transferencia': 'Comisión de transferencia', 'honorarios_exito': 'Honorarios de éxito',
+    'gastos_ordinarios_3m': 'Gastos ordinarios de gestión (3 meses)',
+    'horario': 'Horario', 'horarios': 'Horarios', 'agencia': 'Agencia', 'fecha_calificacion': 'Fecha de calificación',
+}
+
+
+def nombre_dato_ficha(campo):
+    partes = campo.split(':')
+    return ' · '.join([NOMBRES_FICHA_UNICA.get(partes[0], partes[0].replace('_', ' ').capitalize()), *partes[1:]])
+
+
+def valor_dato_ficha(dato, campo='valor_normalizado'):
+    if dato.get('estado') == 'dudoso':
+        return 'dudoso'
+    if dato.get('estado') != 'leido':
+        return 'no disponible en la ficha'
+    valor = dato.get(campo)
+    if valor is None or str(valor).strip() == '':
+        valor = dato.get('valor_literal')
+    return valor if valor is not None and str(valor).strip() else 'no disponible en la ficha'
+
+
+def tablas_ficha_unica(ficha):
+    """Tablas de presentación sin completar faltantes con ceros ni sumar grupos."""
+    condiciones, calificacion = [], []
+    for d in ficha['datos']:
+        fila = {'Dato': nombre_dato_ficha(d['campo']), 'Valor': valor_dato_ficha(d)}
+        destino = calificacion if any(x in d['campo'] for x in ('calificacion', 'agencia')) else condiciones
+        destino.append(fila)
+    honorarios = {}
+    clases = sorted({h['clase'] for h in ficha['honorarios']})
+    for h in ficha['honorarios']:
+        concepto = nombre_dato_ficha(h['concepto'])
+        fila = honorarios.setdefault(concepto, {'Concepto': concepto, **{c: 'no disponible en la ficha' for c in clases}})
+        fila[h['clase']] = valor_dato_ficha(h, 'valor_literal')
+    tenencias = [{'Tipo': 'Subclase' if t['tipo'] == 'subclase' else 'Tenencia',
+                  'Nombre': 'Resto' if t['es_resto'] else t['nombre'],
+                  '%': valor_dato_ficha(t, 'pct')} for t in ficha['tenencias']]
+    return [pd.DataFrame(filas) for filas in (condiciones, list(honorarios.values()), calificacion, tenencias)]
+
+
 def tematica(f):
     """(Descripción breve, Idea y temática) con la marca 'provisorio' si corresponde; '—' si falta."""
     marca = " (provisorio)" if f.get("tematica_provisoria") else ""

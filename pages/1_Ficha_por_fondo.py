@@ -227,6 +227,56 @@ def mostrar_tabla(tabla, **opciones):
         st.dataframe(tabla, **opciones)
 
 
+def mostrar_ficha_unica(codigo, fondo):
+    st.subheader('Ficha Única')
+    if not st.toggle('Abrir Ficha Única', value=False, key=f'abrir_ficha_unica_{codigo}'):
+        return
+    try:
+        resultado = datos.ficha_unica(codigo)
+    except datos.TopeLectura:
+        st.warning('Se alcanzó el tope diario de lectura. Volvé a intentar mañana.')
+        return
+    except datos.psycopg.Error:
+        st.warning('No se pudo consultar la Ficha Única. Volvé a intentar más tarde.')
+        return
+    if resultado['estado'] == 'sin_permiso':
+        st.info('Ficha Única: falta habilitar la lectura (lo hace Claude)')
+        return
+    ficha = resultado['ficha']
+    if ficha is None:
+        st.info('Este fondo todavía no tiene Ficha Única cargada')
+        return
+    fuente = {'gerente': 'web del gerente', 'cafci': 'CAFCI'}.get(ficha['fuente'], 'no disponible en la ficha')
+    estado = {'leida': 'Leída', 'parcial': 'Parcial', 'no_legible': 'No legible'}[ficha['estado_lectura']]
+    st.caption(f"Ficha Única al {formato.fecha(ficha['fecha_referencia'])} · Fuente: {fuente} · {estado}")
+    if str(ficha.get('url') or '').startswith(('https://', 'http://')):
+        st.link_button('Ver documento de la Ficha Única', ficha['url'])
+    condiciones, honorarios, calificacion, tenencias = calculos.tablas_ficha_unica(ficha)
+    for titulo, tabla in (('Condiciones', condiciones), ('Honorarios por clase', honorarios),
+                           ('Calificación', calificacion), ('Principales tenencias según la ficha', tenencias)):
+        if titulo == 'Calificación' and tabla.empty:
+            continue
+        st.markdown(f'**{titulo}**')
+        if tabla.empty:
+            st.caption('no disponible en la ficha')
+        else:
+            st.dataframe(formato.tabla_ordenable(tabla), hide_index=True, width='stretch')
+    st.caption('Referencia: la cartera oficial es la de la CNV')
+    st.markdown('**Temática sugerida por la ficha**')
+    objetivo = next((d for d in ficha['datos'] if d['campo'] == 'objetivo_politica'), {})
+    sugerencia = calculos.valor_dato_ficha(objetivo)
+    st.write(sugerencia)
+    if objetivo.get('estado') != 'leido' or sugerencia == 'no disponible en la ficha':
+        return
+    try:
+        formulario = datos.formulario_tematica_ficha(codigo, fondo)
+        if formulario is not None and st.button('Usar como temática', key=f'usar_tematica_ficha_{codigo}'):
+            datos.anotar_pedido(codigo, 'editar_tematica', idea=str(sugerencia), formulario=formulario)
+            st.success('Pedido de temática anotado. Se aplicará en la próxima corrida del robot.')
+    except (acceso.ErrorAcceso, calculos.ErrorSeguimiento, datos.ErrorPedido):
+        st.caption('La temática se conserva. Podés revisarla en Sumar o quitar fondos.')
+
+
 def mostrar_cambios_cartera(codigo):
     st.subheader('Cambios de cartera')
     if not st.toggle('Abrir Cambios de cartera', key=f'abrir_cambios_{codigo}'):
@@ -504,6 +554,7 @@ with datos.seccion_disponible():
                 puntual.get('clasificacion') if puntual is not None else vista, codigo, e['fecha_cartera'])
 
 mostrar_cambios_cartera(codigo)
+mostrar_ficha_unica(codigo, fondo)
 
 # ───────── Hechos relevantes ─────────
 with datos.seccion_disponible():

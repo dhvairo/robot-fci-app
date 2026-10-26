@@ -1383,6 +1383,38 @@ def pedidos_recientes(limite=60):
         "left join fondos f using (codigo_cnv) order by p.id desc limit %s", (limite,))
 
 
+@st.cache_data(ttl=600, max_entries=256, show_spinner=False)
+def ficha_unica(codigo_cnv):
+    """Una sola consulta por fondo; fuera del precalentado y sin Storage."""
+    try:
+        filas = _ejecutar("""
+            select f.fecha_referencia, f.url, f.fuente, f.estado_lectura,
+              coalesce((select jsonb_agg(to_jsonb(d) - 'ficha_id' order by d.campo)
+                        from ficha_datos d where d.ficha_id = f.id), '[]'::jsonb) as datos,
+              coalesce((select jsonb_agg(to_jsonb(h) - 'ficha_id' order by h.concepto, h.clase)
+                        from ficha_honorarios h where h.ficha_id = f.id), '[]'::jsonb) as honorarios,
+              coalesce((select jsonb_agg(to_jsonb(t) - 'ficha_id' order by t.tipo, t.orden)
+                        from ficha_tenencias t where t.ficha_id = f.id), '[]'::jsonb) as tenencias
+            from fichas_unicas f where f.codigo_cnv = %s
+            order by f.fecha_referencia desc, f.fecha_captura desc, f.id desc limit 1
+        """, (int(codigo_cnv),))
+    except psycopg.errors.InsufficientPrivilege:
+        return {'estado': 'sin_permiso'}
+    return {'estado': 'disponible', 'ficha': None if filas.empty else filas.iloc[0].to_dict()}
+
+
+def formulario_tematica_ficha(codigo, fondo):
+    """Solo el backend privado con control de versiones permite adoptar sin pisar."""
+    import acceso
+    if str(fondo.get('tematica') or '').strip():
+        return None
+    formulario = acceso.formulario_seguimiento(codigo)
+    # Una edición previa, incluso vaciada, se conserva. El legado no garantiza esto.
+    if formulario is None or formulario['version_textos_esperada'] != 0:
+        return None
+    return formulario
+
+
 def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None, *, formulario=None):
     """Anota un pedido en `pedidos_fondos` (lo único que puede escribir la app, con el usuario de permiso mínimo).
     Devuelve el número del pedido."""
