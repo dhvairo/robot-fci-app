@@ -324,6 +324,8 @@ def _ciclo_servidor():
     _tarea_comun('IMPORTS', _imports_comunes)  # CPU independiente de los datos; sin historias ni PDF.
     catalogo.result(timeout=TIEMPO_ESPERA)
     inicio.result(timeout=TIEMPO_ESPERA)
+    # Conserva los clics calientes sin hacer esperar a Inicio ni al catálogo.
+    _tarea_comun('HISTORIA', lambda: datos._serie_comun(datos.version_comun()))
     _OPERACION_PUBLICA = operacion.obtener(st.secrets)  # Mantiene el TTL propio de Actions.
 
 
