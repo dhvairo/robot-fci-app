@@ -1249,11 +1249,13 @@ def _rendimientos_fondo_comun(version, codigo, _fallo=None):
     if _fallo is not None:
         _fallo.append(True)
     return consultar(
-        "select distinct on (r.codigo_cafci) r.codigo_cafci, r.fecha, r.diario, r.dias_7, r.dias_30, "
+        "select r.codigo_cafci, r.fecha, r.diario, r.dias_7, r.dias_30, "
         "r.mes, r.anio, r.meses_12, r.revisar, r.nota, v.cuotaparte, v.patrimonio "
-        "from rendimientos r left join valores_diarios_ultima v using (codigo_cafci, fecha) "
-        "join clases c on c.codigo_cafci = r.codigo_cafci "
-        "where c.codigo_cnv = %s order by r.codigo_cafci, r.fecha desc", (codigo,))
+        "from clases c join lateral (select codigo_cafci, fecha, diario, dias_7, dias_30, "
+        "mes, anio, meses_12, revisar, nota from rendimientos "
+        "where codigo_cafci = c.codigo_cafci order by fecha desc limit 1) r on true "
+        "left join valores_diarios_ultima v on v.codigo_cafci = r.codigo_cafci and v.fecha = r.fecha "
+        "where c.codigo_cnv = %s order by r.codigo_cafci", (codigo,), registrar=False)
 
 
 def _cartera_comun(codigo_cnv):

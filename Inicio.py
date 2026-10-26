@@ -121,6 +121,7 @@ try:
     _hoja_estilo = st.empty()
     estilo.presentar(_hoja_estilo, lambda: navegacion.mostrar(mostrar_inicio))
 finally:
+    rapidez.registrar_agregado(_inicio_rerun)
     _cache_rerun = acceso._estado_rerun() or {}
     logging.getLogger('seguimiento').log(logging.WARNING,
         'SEGUIMIENTO TIEMPO RERUN_TOTAL %.3f_ms cache_aciertos=%d cache_fallos=%d pagina=%s',

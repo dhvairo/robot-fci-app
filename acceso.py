@@ -455,7 +455,8 @@ def _validar_sesion(forzar=False):
         activa = roles_activos()
         backend = _backend_roles() if activa else None
         try:
-            version = backend.version(sesion['persona']['organizacion']) if hasattr(backend, 'version') else None
+            with medir_seguimiento('AUTH_ROLES_VERSION'):
+                version = backend.version(sesion['persona']['organizacion']) if hasattr(backend, 'version') else None
         except Exception:
             invalidar_lecturas_privadas()
             sesion.pop('_validacion', None)
@@ -474,6 +475,11 @@ def _validar_sesion(forzar=False):
         registrar_cache('AUTH', True)
         return dict(anterior[1])
     registrar_cache('AUTH', False)
+    import logging
+    motivo = ('forzada' if forzar else 'sin_validacion' if anterior is None else
+              'identidad_roles' if anterior[0] != llave else
+              'token_por_vencer' if time.time() >= sesion['vence'] - 60 else '300_s')
+    logging.getLogger('seguimiento').warning('SEGUIMIENTO AUTH RENOVAR %s', motivo)
     with medir_seguimiento('AUTH'):
         persona = _validar_sesion_real()
     if estado is not None:
@@ -528,7 +534,7 @@ def _admin(forzar=False, claves=False):
     return persona
 
 
-def requerir_admin_clasificacion():
+def requerir_admin_clasificacion(escritura=True):
     """Contexto colectivo confiable; nunca recibe identidad desde un formulario.
 
     Solo propia/equipo está configurada en servidor en esta unidad sin base nueva.
@@ -536,7 +542,8 @@ def requerir_admin_clasificacion():
     """
     mensaje = "Solo un administrador autorizado puede editar la clasificación."
     try:
-        revalidar_escritura()
+        if escritura:
+            revalidar_escritura()
         if roles_activos():
             _admin()
             c = configuracion_seguimiento()
@@ -734,7 +741,9 @@ def preparar_ingreso(persona):
     import rapidez
 
     def cargar():
-        tarea = rapidez._lanzar('MARCA', lambda: datos.organizacion(persona), publica=True)
+        # El trabajador público no tiene session_state: usar directamente la caché común.
+        tarea = rapidez._lanzar('MARCA', lambda: dict(datos._marca_organizacion(
+            persona['organizacion'], _persona=persona)[1]), publica=True)
         try:
             if preferencias_activas():
                 calculos.preferencias_usuario(st.session_state)

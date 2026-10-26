@@ -90,12 +90,14 @@ def precalentar_sesion(persona):
     """Una tarea privada por sesión/identidad, invalidada junto con las lecturas."""
     import time
     import datos
-    contexto = datos._contexto_clasificacion(persona)
-    contexto = dict(contexto, _version_comun=datos.version_comun())
     identidad = tuple(sorted(dict(persona).items()))
     anterior = st.session_state.get('_arranque_privado')
-    if anterior and anterior[:2] == (identidad, contexto) and time.monotonic() - anterior[2] < 300:
+    if (anterior and anterior[0] == identidad
+            and anterior[1].get('_version_comun') == datos.version_comun()
+            and time.monotonic() - anterior[2] < 300):
         return anterior[3]
+    contexto = datos._contexto_clasificacion(persona)
+    contexto = dict(contexto, _version_comun=datos.version_comun())
     precalentar_comunes()
     def cargar():
         # No esperar catálogo, Gestión, Filas ni imports para tener la clasificación.
@@ -144,9 +146,18 @@ def inicio():
     def cargar():
         return en_paralelo((lambda: operacion.obtener(st.secrets), datos.resumen_base,
                             datos.ultimas_entradas, datos.estado_robot))
-    if not _lista('INICIO', cargar):
+    tarea = _tarea_comun('INICIO', cargar)
+    if _SERVIDOR_PUBLICO is not None and not tarea.done():
+        @st.fragment(run_every=0.5)
+        def pendiente():
+            if tarea.done():
+                st.rerun()
+            st.caption('Cargando…')
+        pendiente()
         return None
-    resultado = _tarea_comun('INICIO', cargar).result()
+    if not _esperar(tarea):
+        return None
+    resultado = tarea.result()
     return (_OPERACION_PUBLICA or resultado[0], *resultado[1:])
 
 
@@ -175,8 +186,7 @@ def precalentar_comunes():
                             lambda: datos._indice_clases_comunes(datos.version_comun()),
                             lambda: datos.filas_a_revisar(120),
                             datos._cabeceras_carteras_comunes, datos._catalogo_fondos_comun,
-                            lambda: datos._fondos_ficha_comunes(False),
-                            lambda: datos._serie_comun(datos.version_comun())))
+                            lambda: datos._fondos_ficha_comunes(False)))
     return _tarea_comun('CATALOGO', cargar)
 
 
@@ -253,6 +263,20 @@ def memorizar(clave, calcular, *seleccion, contexto=None):
     return resultado
 
 
+def registrar_agregado(inicio):
+    """Tiempo completo del rerun que incorpora un fondo; sin nombres ni identificadores en el log."""
+    import time
+    import logging
+    anteriores = st.session_state.setdefault('_selecciones_medidas', {})
+    for nombre, clave in (('FICHA', 'ficha_fondo'), ('COMPARADOR', 'comparador_fondos')):
+        valor = st.session_state.get(clave)
+        actual = set(valor if isinstance(valor, (list, tuple)) else [valor]) - {None}
+        if actual - anteriores.get(nombre, set()):
+            logging.getLogger('seguimiento').warning('SEGUIMIENTO TIEMPO AGREGAR_FONDO_%s %.3f_ms',
+                nombre, (time.perf_counter() - inicio) * 1000)
+        anteriores[nombre] = actual
+
+
 from threading import Event
 _POOLS_INICIADOS = globals().get('_POOLS_INICIADOS', Event())
 
@@ -292,11 +316,11 @@ def _ciclo_servidor():
     else:
         datos.preparar_conexiones()
     datos.refrescar_comunes()
-    catalogo = precalentar_comunes()
     def inicio_publico():
         return en_paralelo((lambda: operacion.obtener(st.secrets), datos.resumen_base,
                             datos.ultimas_entradas, datos.estado_robot))
     inicio = _tarea_comun('INICIO', inicio_publico)
+    catalogo = precalentar_comunes()
     _tarea_comun('IMPORTS', _imports_comunes)  # CPU independiente de los datos; sin historias ni PDF.
     catalogo.result(timeout=TIEMPO_ESPERA)
     inicio.result(timeout=TIEMPO_ESPERA)

@@ -454,13 +454,16 @@ def enviar_al_informe(sesion, codigos):
 
 def clases_comparador(fondos, moneda, leer_clases):
     partes = []
-    for f in fondos.to_dict('records'):
-        cl = filtrar_moneda(leer_clases(int(f['codigo_cnv'])), moneda).copy()
-        cl['codigo_cnv'] = int(f['codigo_cnv'])
-        cl['nombre_fondo'] = f['nombre']
-        cl['etiqueta'] = f['nombre'] + ' — ' + cl['nombre'].str.split(' - ').str[-1]
-        partes.append(cl)
-    return pd.concat(partes, ignore_index=True)
+    registros = fondos.to_dict('records')
+    for f in registros:
+        partes.append(filtrar_moneda(leer_clases(int(f['codigo_cnv'])), moneda))
+    resultado = pd.concat(partes, keys=range(len(partes)))
+    resultado['codigo_cnv'] = resultado.index.get_level_values(0).map(
+        {i: int(f['codigo_cnv']) for i, f in enumerate(registros)})
+    resultado = resultado.reset_index(drop=True)
+    resultado['nombre_fondo'] = resultado.codigo_cnv.map(fondos.set_index('codigo_cnv')['nombre'])
+    resultado['etiqueta'] = resultado['nombre_fondo'] + ' — ' + resultado['nombre'].str.split(' - ').str[-1]
+    return resultado
 
 
 def agrupar_clases_comparador(clases):

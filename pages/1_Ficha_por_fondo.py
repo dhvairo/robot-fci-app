@@ -75,7 +75,7 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
     persona = acceso.usuario() or {}
     motivo = ''
     try:
-        acceso.requerir_admin_clasificacion()
+        acceso.requerir_admin_clasificacion(escritura=False)
     except acceso.ErrorAcceso:
         motivo = 'función administrador'
         st.caption(motivo)
