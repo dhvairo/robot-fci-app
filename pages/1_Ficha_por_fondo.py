@@ -277,7 +277,7 @@ if todos.empty:
     st.session_state["ficha_fondo"] = None
     st.info("No hay fondos en el catálogo.")
     st.stop()
-filtrados = filtros.mostrar(todos, inicial=inicial_seguimiento)
+filtrados = todos if pendiente else filtros.mostrar(todos, inicial=inicial_seguimiento)
 filtrados = filtrados.sort_values("nombre", key=lambda s: s.str.casefold())
 codigos = filtrados["codigo_cnv"].tolist()
 if st.session_state.get("ficha_fondo") not in codigos:
@@ -422,8 +422,9 @@ with datos.seccion_disponible():
                     ser = calculos.base_100(ser, ser["fecha"].min())
                     fig = None
                     if ser["base 100"].notna().any():
-                        fig = px.line(ser, x="fecha", y="base 100", color="nombre", markers=True,
-                                      title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
+                        fig = go.Figure([go.Scatter(x=g['fecha'], y=g['base 100'], name=n,
+                            mode='lines+markers') for n, g in ser.groupby('nombre', sort=False)])
+                        fig.update_layout(title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
                         fig.update_traces(connectgaps=False)
                         fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
                         fig = formato.plotly_es(fig, fechas_x=True)
@@ -438,8 +439,8 @@ with datos.seccion_disponible():
     # ───────── Cartera ─────────
 with datos.seccion_disponible():
     st.subheader("Cartera semanal")
-    enc = datos.cartera_encabezado(codigo, vista) if seguido else pd.DataFrame()
-    cart = datos.cartera(codigo, vista) if seguido else pd.DataFrame()
+    enc = memorizar('ficha_encabezado', lambda: datos.cartera_encabezado(codigo, vista), codigo) if seguido else pd.DataFrame()
+    cart = memorizar('ficha_cartera', lambda: datos.cartera(codigo, vista), codigo) if seguido else pd.DataFrame()
     if puntual is not None:
         enc, cart = puntual["encabezado"], puntual["cartera"]
     if pendiente:
@@ -485,9 +486,10 @@ with datos.seccion_disponible():
         det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
         det = det[det["pct_pn"] > 0].sort_values("pct_pn")
         with g2:
-            rapidez.grafico_memorizado("ficha_barras_json", memorizar("ficha_barras", lambda: formato.plotly_es(px.bar(
-            det, x="pct_pn", y="categoria_detallada", orientation="h", title="Por rubro, moneda e indexación (% del PN)",
-            labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), codigo, id(puntual) if puntual else None)
+            rapidez.grafico_memorizado("ficha_barras_json", memorizar("ficha_barras", lambda: formato.plotly_es(
+                go.Figure(go.Bar(x=det['pct_pn'], y=det['categoria_detallada'], orientation='h')).update_layout(
+                    title="Por rubro, moneda e indexación (% del PN)", xaxis_title="% del PN", yaxis_title="")),
+                codigo), codigo, id(puntual) if puntual else None)
         st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
                  list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
         if not parcial:
