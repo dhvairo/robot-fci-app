@@ -433,7 +433,7 @@ with datos.seccion_disponible():
                 if calculos.historia_insuficiente(ser):
                     st.info("Historia insuficiente en alguna clase: se necesitan dos cuotapartes válidas para mostrar evolución.")
                 if fig is not None:
-                    st.plotly_chart(fig, width="stretch")
+                    rapidez.grafico_memorizado("ficha_linea", fig, codigo, clases_sel, id(puntual) if puntual else None)
 
     # ───────── Cartera ─────────
 with datos.seccion_disponible():
@@ -480,12 +480,14 @@ with datos.seccion_disponible():
                                        pull=[0.08 if r in elegidos else 0 for r in resumen["categoria_resumen"]]))
                 fig.update_layout(title="Por rubro", margin=dict(t=50, b=10))
                 return formato.plotly_es(fig)
-            st.plotly_chart(memorizar("ficha_torta", armar_torta, codigo, rubros_sel), width="stretch")
+            rapidez.grafico_memorizado("ficha_torta_json", memorizar("ficha_torta", armar_torta, codigo, rubros_sel),
+                codigo, rubros_sel, id(puntual) if puntual else None)
         det = activos.groupby("categoria_detallada", as_index=False)["pct_pn"].sum()
         det = det[det["pct_pn"] > 0].sort_values("pct_pn")
-        g2.plotly_chart(memorizar("ficha_barras", lambda: formato.plotly_es(px.bar(
+        with g2:
+            rapidez.grafico_memorizado("ficha_barras_json", memorizar("ficha_barras", lambda: formato.plotly_es(px.bar(
             det, x="pct_pn", y="categoria_detallada", orientation="h", title="Por rubro, moneda e indexación (% del PN)",
-            labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), width="stretch")
+            labels={"pct_pn": "% del PN", "categoria_detallada": ""})), codigo), codigo, id(puntual) if puntual else None)
         st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
                  list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
         if not parcial:
