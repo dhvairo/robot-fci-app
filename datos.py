@@ -1072,6 +1072,16 @@ def fondos_seguidos():
                      "where seguido order by nombre")
 
 
+def _sql_descripcion_ficha():
+    # Subconsulta dentro de las lecturas ya cacheadas; no consulta por fondo/rerun.
+    return """(select jsonb_build_object('fuente', u.fuente, 'fecha_referencia', u.fecha_referencia,
+        'datos', coalesce((select jsonb_agg(to_jsonb(d) - 'ficha_id') from ficha_datos d
+            where d.ficha_id=u.id and d.campo in
+            ('objetivo_politica','descripcion','politica_inversion','objetivo')), '[]'::jsonb))
+        from fichas_unicas u where u.codigo_cnv=f.codigo_cnv
+        order by u.fecha_referencia desc, u.fecha_captura desc, u.id desc limit 1) as _ficha_unica, """
+
+
 def _fondos_ficha_comunes(incluir_no_seguidos=False):
     """Cabecera y primera categoría de los seguidos; incluir_no_seguidos habilita todo el catálogo.
 
@@ -1087,7 +1097,7 @@ def _fondos_ficha_comunes(incluir_no_seguidos=False):
         "case when f.seguido then coalesce(t.categoria_detallada, 'Sin cartera') "
         "else 'Sin cartera' end as categoria, "
         "f.clasificacion_cnv, f.region, f.horizonte, f.descripcion_breve, f.tematica, f.tematica_provisoria, "
-        "g.nombre as gerente, d.nombre as depositaria, "
+        + _sql_descripcion_ficha() + "g.nombre as gerente, d.nombre as depositaria, "
         "(select sum(p.patrimonio) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
         "and p.marca_estado = '') as patrimonio_neto, "
         "(select max(p.fecha_dato) from foto_clases p where p.codigo_cnv = f.codigo_cnv "
@@ -1136,8 +1146,20 @@ def _clases_gestion_comunes():
 
 def _clases_vigentes_comunes():
     """Una sola lectura común de todas las clases vigentes; el Comparador no consulta fondo por fondo."""
-    return consultar("select codigo_cnv, codigo_cafci, nombre, moneda from clases "
-                     "where vigente_hasta is null order by nombre")
+    clases = consultar("""select c.codigo_cnv, c.codigo_cafci, c.nombre, c.moneda,
+        a.patrimonio_ultimo, a.cantidad_min, a.cantidad_max
+        from clases c left join (
+            select codigo_cafci, (array_agg(patrimonio order by fecha desc))[1] as patrimonio_ultimo,
+                min(coalesce(cantidad_cuotapartes, patrimonio / nullif(cuotaparte, 0))) as cantidad_min,
+                max(coalesce(cantidad_cuotapartes, patrimonio / nullif(cuotaparte, 0))) as cantidad_max
+            from valores_diarios_ultima where fecha between current_date - 29 and current_date
+            group by codigo_cafci
+        ) a using (codigo_cafci)
+        where c.vigente_hasta is null order by c.nombre""")
+    if {'cantidad_min', 'cantidad_max', 'patrimonio_ultimo'} <= set(clases):
+        clases['activa'] = clases.codigo_cafci.map(calculos.actividad_clases(clases)).fillna(False)
+    return clases
+
 
 
 def clases_de_fondo(codigo_cnv):
@@ -1151,7 +1173,7 @@ def _indice_clases_comunes(version):
     todas = _clases_vigentes_comunes()
     if todas.empty:
         return {}
-    return {str(c): g[['codigo_cafci', 'nombre', 'moneda']].reset_index(drop=True)
+    return {str(c): g[[c for c in ('codigo_cafci', 'nombre', 'moneda', 'activa') if c in g]].reset_index(drop=True)
             for c, g in todas.groupby('codigo_cnv')}
 
 
@@ -1177,9 +1199,12 @@ def clases_seguidas():
 
 
 def clases_preferidas(df_clases):
-    """Clase A y B de cada fondo; si no existen, las que haya (regla de la especificación)."""
-    ab = df_clases[df_clases["nombre"].str.contains(r"Clase [AB]\b", regex=True)]
-    return ab if len(ab) else df_clases
+    """Activas; si no se puede acreditar ninguna, todas como respaldo."""
+    activas = df_clases[df_clases.get('activa', pd.Series(False, index=df_clases.index)).fillna(False)]
+    salida = (activas if len(activas) else df_clases).copy()
+    salida.attrs['sin_activas'] = activas.empty
+    return salida
+
 
 
 @st.cache_resource(max_entries=4, show_spinner=False)
@@ -1373,7 +1398,8 @@ def _catalogo_fondos_comun():
     """Todos los fondos del catálogo (seguidos o no) para el buscador de "Sumar o quitar fondos"."""
     return consultar(
         "select f.codigo_cnv, f.nombre, f.moneda, f.seguido, f.id_ficha_web, f.tipo_fondo, f.rubro, "
-        "f.descripcion_breve, f.tematica, f.tematica_provisoria, g.nombre as gerente "
+        "f.descripcion_breve, f.tematica, f.tematica_provisoria, "
+        + _sql_descripcion_ficha() + "g.nombre as gerente "
         "from fondos f left join sociedades g on g.tipo = 'gerente' and g.codigo = f.codigo_gerente "
         "order by f.nombre")
 

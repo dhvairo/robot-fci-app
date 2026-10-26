@@ -52,10 +52,9 @@ def secciones(tabla, fondos=None):
             raise calculos.ErrorSeguimiento('FONDOS_PDF_AUSENTES')
         propios = _fondos_pdf(fondos).set_index('codigo_cnv')
         tabla = tabla.copy(deep=True)
-        tabla['_idea_pdf'] = tabla['_codigo'].map(propios.tematica).map(calculos._texto)
-        tabla['_idea'] = tabla['_codigo'].map(
-            {codigo: calculos.tematica(f.to_dict())[1] for codigo, f in propios.iterrows()})
-        tabla['Descripción breve'] = tabla['_codigo'].map(propios.descripcion_breve).map(calculos._texto)
+        efectivos = {codigo: calculos.descripcion_visible(f.to_dict()) for codigo, f in propios.iterrows()}
+        for columna in ('_idea_pdf', '_idea', 'Descripción breve'):
+            tabla[columna] = tabla['_codigo'].map(efectivos)
     out = []
     for clave, texto, codigos in MONEDAS:
         t = tabla[tabla["_moneda"].isin(codigos)]
@@ -255,8 +254,7 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
         fondo = _fondos_pdf(pd.DataFrame([fondo])).iloc[0].to_dict()
     contenido = [f"Código CNV {fondo['codigo_cnv']} · {formato.texto_o_guion(fondo.get('estado'))}"]
     contenido += [f"{etiqueta}: {valor}" for etiqueta, valor in calculos.cabecera_fondo(fondo)]
-    contenido += ["Descripción breve: " + formato.texto_o_guion(fondo.get("descripcion_breve")),
-                  "Idea y temática: " + formato.texto_o_guion(fondo.get("tematica"))]
+    contenido += ["Descripción breve: " + calculos.descripcion_visible(fondo)]
     if not clases.empty:
         valores = [c for c in clases if not c.endswith("%")]
         rendimientos = ["Clase"] + [c for c in clases if c.endswith("%")]
@@ -343,8 +341,9 @@ def pdf_comparador(serie, tabla, modo, notas=(), *, fondos=None):
         if fondos is None:
             raise calculos.ErrorSeguimiento('FONDOS_PDF_AUSENTES')
         propios = _fondos_pdf(fondos)
-        textos = propios[['nombre', 'descripcion_breve', 'tematica', 'seguido']].copy()
-        textos.columns = ['Fondo', 'Descripción breve', 'Idea y temática', 'Seguido']
+        textos = propios[['nombre', 'seguido']].copy()
+        textos.columns = ['Fondo', 'Seguido']
+        textos['Descripción breve'] = [calculos.descripcion_visible(f.to_dict()) for _, f in propios.iterrows()]
         textos['Seguido'] = textos['Seguido'].map({True: 'Sí', False: 'No'})
         textos = textos.fillna(formato.VACIO)
         contenido.append(('Seguimiento de la organización', textos))

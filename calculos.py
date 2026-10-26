@@ -910,10 +910,55 @@ def texto_complemento(dato, campo=None):
     return texto
 
 
+def descripcion_fondo(fondo, ficha=None):
+    """Texto efectivo único, con procedencia; nunca modifica el respaldo privado."""
+    ficha = ficha if ficha is not None else fondo.get('_ficha_unica')
+    if isinstance(ficha, dict):
+        for campo in ('objetivo_politica', 'descripcion', 'politica_inversion', 'objetivo'):
+            for dato in ficha.get('datos', []):
+                texto = texto_complemento(dato)
+                if dato.get('campo') == campo and texto:
+                    fuente = {'gerente': 'web del gerente', 'cafci': 'CAFCI'}.get(
+                        ficha.get('fuente'), ficha.get('fuente') or 'Ficha Única')
+                    return texto, f"Ficha Única al {formato.fecha(ficha.get('fecha_referencia'))} · fuente: {fuente}"
+    textos = []
+    for campo in ('descripcion_breve', 'tematica'):
+        texto = _texto(fondo.get(campo))
+        if texto != formato.VACIO and normalizar_complemento(texto) not in {
+                normalizar_complemento(t) for t in textos}:
+            textos.append(texto)
+    return ' · '.join(textos) or formato.VACIO, ''
+
+
+def descripcion_visible(fondo, ficha=None):
+    texto, fuente = descripcion_fondo(fondo, ficha)
+    return texto + (' (' + fuente + ')' if fuente else '')
+
+
+def actividad_clases(historia, hoy=None):
+    """Actividad de 30 días corridos; también acepta el resumen de la lectura común."""
+    if historia.empty:
+        return pd.Series(dtype=bool)
+    h = historia.copy()
+    if {'cantidad_min', 'cantidad_max', 'patrimonio_ultimo'} <= set(h):
+        return h.set_index('codigo_cafci').eval(
+            'patrimonio_ultimo > 0 and cantidad_max > cantidad_min').fillna(False)
+    h['fecha'] = pd.to_datetime(h.fecha)
+    cierre = pd.Timestamp(hoy).normalize() if hoy is not None else pd.Timestamp.today().normalize()
+    h = h[h.fecha.between(cierre - pd.Timedelta(days=29), cierre)].sort_values('fecha')
+    for campo in ('patrimonio', 'cuotaparte', 'cantidad_cuotapartes'):
+        h[campo] = pd.to_numeric(h.get(campo, pd.Series(index=h.index, dtype=float)), errors='coerce')
+    h['cantidad'] = h.cantidad_cuotapartes.fillna(h.patrimonio.div(h.cuotaparte.where(h.cuotaparte.gt(0))))
+    grupos = h.groupby('codigo_cafci')
+    cantidades = grupos.cantidad.agg(['min', 'max'])
+    ultimo = h.drop_duplicates('codigo_cafci', keep='last').set_index('codigo_cafci').patrimonio
+    return (ultimo.gt(0) & cantidades['max'].gt(cantidades['min'])).fillna(False)
+
+
 def integrar_ficha_unica(fondo, ficha):
     """Complementa la cabecera y los costos sin repetir ni sustituir datos propios."""
     resultado = dict(cabecera=cabecera_fondo(fondo), extras=[], avisos=[],
-                     descripcion=tematica(fondo)[0], sugerencia='', costos=pd.DataFrame())
+                     descripcion=descripcion_fondo(fondo, ficha)[0], sugerencia='', costos=pd.DataFrame())
     if not ficha:
         return resultado
     fecha = formato.fecha(ficha['fecha_referencia'])
@@ -933,13 +978,8 @@ def integrar_ficha_unica(fondo, ficha):
         nuevo = texto_complemento(d, campo)
         if not nuevo:
             continue
-        if campo == 'objetivo_politica':
-            # Es una descripción complementaria; la temática editada se conserva.
-            if not normalizar_complemento(fondo.get('descripcion_breve')):
-                resultado['descripcion'] = nuevo
-            if normalizar_complemento(nuevo) not in {
-                    normalizar_complemento(resultado['descripcion']), normalizar_complemento(fondo.get('tematica'))}:
-                resultado['sugerencia'] = nuevo
+        if campo in ('objetivo_politica', 'descripcion', 'politica_inversion', 'objetivo'):
+            continue
         elif campo in mapa:
             etiqueta = mapa[campo]
             anterior = cabecera.get(etiqueta, '')
@@ -1100,7 +1140,7 @@ def resumen_masivo(fondos, carteras, sumas, tenencias):
         c, cats = cart.get(cod), por_cat.get(cod, {})
         fila = {"Fondo": f["nombre"], "Moneda": MONEDA_RESUMEN.get(f["moneda"], formato.VACIO),
                 "Clasificación CNV": _texto(f.get("clasificacion_cnv")),   # solo la de la ficha de la CNV, nunca la de la CAFCI
-                "Descripción breve": _texto(f.get("descripcion_breve")),
+                "Descripción breve": descripcion_visible(f.to_dict()),
                 "Patrimonio neto": None if c is None else _pct(c["patrimonio"])}
         for cat in CATEGORIAS_RESUMEN:
             fila[ETIQUETA_CATEGORIA.get(cat, cat)] = cats.get(cat, 0.0)
@@ -1117,8 +1157,8 @@ def resumen_masivo(fondos, carteras, sumas, tenencias):
             fila[col], fila[col_pct] = nombre, pct
         fila["Cartera al"] = None if c is None else c["fecha_cartera"]
         fila["_codigo"], fila["_moneda"] = cod, f["moneda"]
-        fila["_idea"] = tematica(f.to_dict())[1]
-        fila["_idea_pdf"] = _texto(f.get("tematica"))        # el PDF para clientes no lleva la marca "(provisorio)"
+        fila["_idea"] = descripcion_visible(f.to_dict())
+        fila["_idea_pdf"] = descripcion_visible(f.to_dict())        # el PDF para clientes no lleva la marca "(provisorio)"
         filas.append(fila)
     return pd.DataFrame(filas)
 

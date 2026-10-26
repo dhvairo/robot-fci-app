@@ -178,7 +178,7 @@ if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
                                        help="Una línea sobre el fondo. Si la dejás vacía, las pantallas muestran «—».")
             idea = st.text_area("Idea y temática (opcional)", max_chars=calculos.MAX_IDEA,
                                 help="La idea de inversión del fondo. Si la dejás vacía, las pantallas muestran «—».")
-            st.caption("Leé el factsheet del fondo y copiá el texto de objetivo/política de inversión")
+            st.caption("El texto propio solo se muestra si el fondo no tiene descripción en su Ficha Única.")
             id_ficha = st.text_input("ID de la ficha CNV (opcional)", placeholder="Por ejemplo: 63491",
                                      help="El robot lo busca solo. Si no lo encuentra, el pedido queda con problema y te lo "
                                           "pide más abajo, en «Mis pedidos». Si ya lo sabés, cargalo acá y lo usa sin buscar.")
@@ -186,15 +186,13 @@ if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
                 anotar(codigo, f["nombre"], "seguir", descripcion, idea, id_ficha)
     else:
         st.write("**Se sigue.**")
-        st.markdown(f"**Descripción breve:** {formato.texto_o_guion(f['descripcion_breve'])}  \n"
-                    f"**Idea y temática:** {formato.texto_o_guion(f['tematica'])}"
-                    + ("  \n*(provisorio)*" if f["tematica_provisoria"] else ""))
+        st.markdown(f"**Descripción breve:** {calculos.descripcion_visible(f.to_dict())}")
         with st.form(f"editar_{codigo}"):
             st.markdown("**Editar descripción y temática**")
             descripcion = st.text_area("Descripción breve", value=f["descripcion_breve"] or "",
                                        max_chars=calculos.MAX_DESCRIPCION)
             idea = st.text_area("Idea y temática", value=f["tematica"] or "", max_chars=calculos.MAX_IDEA)
-            st.caption("Leé el factsheet del fondo y copiá el texto de objetivo/política de inversión")
+            st.caption("El texto propio solo se muestra si el fondo no tiene descripción en su Ficha Única.")
             st.caption("Si dejás un campo vacío, se borra. Los cambios simultáneos requieren revisar la versión."
                        if formulario_privado is not None else "Gana lo último que se cargó. Si dejás un campo vacío, se borra.")
             if st.form_submit_button("Guardar descripción y temática", disabled=hay_pendiente):

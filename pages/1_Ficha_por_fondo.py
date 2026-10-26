@@ -238,25 +238,6 @@ def leer_complemento(codigo):
     return None
 
 
-def mostrar_tematica_sugerida(codigo, fondo, ficha, complemento):
-    if not ficha:
-        return
-    objetivo = next((d for d in ficha['datos'] if d['campo'] == 'objetivo_politica'), {})
-    sugerencia = calculos.texto_complemento(objetivo)
-    if complemento['sugerencia']:
-        st.markdown(f"**Temática sugerida por la ficha:** {complemento['sugerencia']}")
-    if not sugerencia:
-        return
-    try:
-        formulario = datos.formulario_tematica_ficha(codigo, fondo)
-        if formulario is not None and st.button('Usar como temática', key=f'usar_tematica_ficha_{codigo}'):
-            datos.anotar_pedido(codigo, 'editar_tematica', idea=sugerencia, formulario=formulario)
-            st.success('Pedido de temática anotado. Se aplicará en la próxima corrida del robot.')
-    except (acceso.ErrorAcceso, calculos.ErrorSeguimiento, datos.ErrorPedido):
-        st.caption('La temática se conserva. Podés revisarla en Sumar o quitar fondos.')
-
-
-
 st.set_page_config(page_title="Ficha por fondo", page_icon="📈", layout="wide")
 acceso.requerir()
 inicial_seguimiento = calculos.filtro_seguimiento_inicial(st.session_state)
@@ -280,6 +261,8 @@ if todos.empty:
 filtrados = todos if pendiente else filtros.mostrar(todos, inicial=inicial_seguimiento, memorizar=rapidez.memorizar)
 filtrados = filtrados.sort_values("nombre", key=lambda s: s.str.casefold())
 codigos = filtrados["codigo_cnv"].tolist()
+if "ficha_fondo" not in st.session_state and "ficha_fondo_retorno" in st.session_state:
+    st.session_state["ficha_fondo"] = st.session_state.pop("ficha_fondo_retorno")
 if st.session_state.get("ficha_fondo") not in codigos:
     st.session_state["ficha_fondo"] = None
 if filtrados.empty:
@@ -345,11 +328,9 @@ cab = complemento['cabecera']
 for i in range(0, len(cab), 3):
     for col, (etiqueta, valor) in zip(st.columns(3), cab[i:i + 3]):
         col.markdown(f"**{etiqueta}**  \n{valor}")
-descripcion, idea = calculos.tematica(fondo.to_dict())
-st.markdown(f"**Descripción breve:** {complemento['descripcion']}")
-st.markdown(f"**Idea y temática:** {idea}")
-if not pendiente:
-    mostrar_tematica_sugerida(codigo, fondo, ficha, complemento)
+fondo = fondo.copy()
+fondo['_ficha_unica'] = ficha
+st.markdown(f"**Descripción breve:** {calculos.descripcion_visible(fondo.to_dict())}")
 for etiqueta, valor in complemento['extras']:
     st.markdown(f"**{etiqueta}:** {valor}")
 for aviso in complemento['avisos']:
@@ -372,9 +353,11 @@ with datos.seccion_disponible():
         st.info("El fondo no tiene clases vigentes en el catálogo.")
     else:
         por_defecto = datos.clases_preferidas(clases)
+        if por_defecto.attrs.get("sin_activas"):
+            st.caption("Sin clases con movimiento comprobado en 30 días: se muestran todas.")
         elegidas = st.multiselect("Clases a mostrar", clases["nombre"].tolist(),
                                   default=por_defecto["nombre"].tolist(),
-                                  help="Por defecto Clase A y B; si el fondo no las tiene, las disponibles.")
+                                  help="Por defecto clases con patrimonio y movimiento en 30 días. La lista permite elegir todas las clases.")
         sel = clases[clases["nombre"].isin(elegidas)]
         clases_sel = tuple(elegidas)
         if len(sel):
@@ -516,7 +499,7 @@ with datos.seccion_disponible():
 if st.button("Ver cambios de cartera"):
     st.session_state["cambios_fondo"] = codigo
     st.session_state["cambios_origen"] = codigo
-    st.session_state["ficha_fondo"] = codigo
+    st.session_state["ficha_fondo_retorno"] = codigo
     st.switch_page("pages/11_Cambios_de_cartera.py")
 
 # ───────── Hechos relevantes ─────────
