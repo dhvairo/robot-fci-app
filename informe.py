@@ -52,9 +52,12 @@ def secciones(tabla, fondos=None):
             raise calculos.ErrorSeguimiento('FONDOS_PDF_AUSENTES')
         propios = _fondos_pdf(fondos).set_index('codigo_cnv')
         tabla = tabla.copy(deep=True)
-        efectivos = {codigo: calculos.descripcion_visible(f.to_dict()) for codigo, f in propios.iterrows()}
-        for columna in ('_idea_pdf', '_idea', 'Descripción breve'):
-            tabla[columna] = tabla['_codigo'].map(efectivos)
+        efectivos = {codigo: calculos.textos_fondo(f.to_dict()) for codigo, f in propios.iterrows()}
+        tabla['Descripción breve'] = tabla['_codigo'].map(lambda c: efectivos[c][0])
+        tabla['_idea'] = tabla['_codigo'].map(lambda c: efectivos[c][1])
+        tabla['_idea_pdf'] = tabla['_codigo'].map(
+            lambda c: efectivos[c][1] if calculos.descripcion_fondo(propios.loc[c].to_dict())[1]
+            else calculos._texto(propios.loc[c].get('tematica')))
     out = []
     for clave, texto, codigos in MONEDAS:
         t = tabla[tabla["_moneda"].isin(codigos)]
@@ -254,7 +257,7 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
         fondo = _fondos_pdf(pd.DataFrame([fondo])).iloc[0].to_dict()
     contenido = [f"Código CNV {fondo['codigo_cnv']} · {formato.texto_o_guion(fondo.get('estado'))}"]
     contenido += [f"{etiqueta}: {valor}" for etiqueta, valor in calculos.cabecera_fondo(fondo)]
-    contenido += ["Descripción breve: " + calculos.descripcion_visible(fondo)]
+    contenido += [f"{e}: {t}" for e, t in calculos.lineas_descripcion(fondo)]
     if not clases.empty:
         valores = [c for c in clases if not c.endswith("%")]
         rendimientos = ["Clase"] + [c for c in clases if c.endswith("%")]
@@ -343,9 +346,10 @@ def pdf_comparador(serie, tabla, modo, notas=(), *, fondos=None):
         propios = _fondos_pdf(fondos)
         textos = propios[['nombre', 'seguido']].copy()
         textos.columns = ['Fondo', 'Seguido']
-        textos['Descripción breve'] = [calculos.descripcion_visible(f.to_dict()) for _, f in propios.iterrows()]
+        textos['Descripción breve'] = [calculos.textos_fondo(f.to_dict())[0] for _, f in propios.iterrows()]
+        textos['Idea y temática'] = [calculos.textos_fondo(f.to_dict())[1] for _, f in propios.iterrows()]
         textos['Seguido'] = textos['Seguido'].map({True: 'Sí', False: 'No'})
-        textos = textos.fillna(formato.VACIO)
+        textos = textos[['Fondo', 'Descripción breve', 'Idea y temática', 'Seguido']].fillna(formato.VACIO)
         contenido.append(('Seguimiento de la organización', textos))
     campos = []
     if modo in ("R", "R y P"):

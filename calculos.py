@@ -935,6 +935,26 @@ def descripcion_visible(fondo, ficha=None):
     return texto + (' (' + fuente + ')' if fuente else '')
 
 
+def textos_fondo(fondo, ficha=None):
+    """(descripción, idea) para tablas con dos columnas: con ficha va todo en la primera; nunca se repite."""
+    texto, fuente = descripcion_fondo(fondo, ficha)
+    if fuente:
+        return texto + ' (' + fuente + ')', formato.VACIO
+    idea = tematica(fondo)[1]
+    descripcion = _texto(fondo.get('descripcion_breve'))
+    if descripcion != formato.VACIO and normalizar_complemento(descripcion) == normalizar_complemento(idea):
+        idea = formato.VACIO
+    return descripcion, idea
+
+
+def lineas_descripcion(fondo, ficha=None):
+    """Markdown de pantalla/PDF: con ficha una sola línea; sin ficha, lo escrito al pedir el fondo."""
+    descripcion, idea = textos_fondo(fondo, ficha)
+    if descripcion_fondo(fondo, ficha)[1]:
+        return [('Descripción breve', descripcion)]
+    return [('Descripción breve', descripcion), ('Idea y temática', idea)]
+
+
 def actividad_clases(historia, hoy=None):
     """Actividad de 30 días corridos; también acepta el resumen de la lectura común."""
     if historia.empty:
@@ -1140,7 +1160,7 @@ def resumen_masivo(fondos, carteras, sumas, tenencias):
         c, cats = cart.get(cod), por_cat.get(cod, {})
         fila = {"Fondo": f["nombre"], "Moneda": MONEDA_RESUMEN.get(f["moneda"], formato.VACIO),
                 "Clasificación CNV": _texto(f.get("clasificacion_cnv")),   # solo la de la ficha de la CNV, nunca la de la CAFCI
-                "Descripción breve": descripcion_visible(f.to_dict()),
+                "Descripción breve": textos_fondo(f.to_dict())[0],
                 "Patrimonio neto": None if c is None else _pct(c["patrimonio"])}
         for cat in CATEGORIAS_RESUMEN:
             fila[ETIQUETA_CATEGORIA.get(cat, cat)] = cats.get(cat, 0.0)
@@ -1157,8 +1177,9 @@ def resumen_masivo(fondos, carteras, sumas, tenencias):
             fila[col], fila[col_pct] = nombre, pct
         fila["Cartera al"] = None if c is None else c["fecha_cartera"]
         fila["_codigo"], fila["_moneda"] = cod, f["moneda"]
-        fila["_idea"] = descripcion_visible(f.to_dict())
-        fila["_idea_pdf"] = descripcion_visible(f.to_dict())        # el PDF para clientes no lleva la marca "(provisorio)"
+        propios = textos_fondo(f.to_dict())
+        fila["_idea"] = propios[1]
+        fila["_idea_pdf"] = propios[1] if descripcion_fondo(f.to_dict())[1] else _texto(f.get("tematica"))        # el PDF para clientes no lleva la marca "(provisorio)"
         filas.append(fila)
     return pd.DataFrame(filas)
 

@@ -186,7 +186,10 @@ if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
                 anotar(codigo, f["nombre"], "seguir", descripcion, idea, id_ficha)
     else:
         st.write("**Se sigue.**")
-        st.markdown(f"**Descripción breve:** {calculos.descripcion_visible(f.to_dict())}")
+        st.markdown("  
+".join(f"**{e}:** {t}" for e, t in calculos.lineas_descripcion(f.to_dict()))
+                    + ("  
+*(provisorio)*" if f["tematica_provisoria"] and not calculos.descripcion_fondo(f.to_dict())[1] else ""))
         with st.form(f"editar_{codigo}"):
             st.markdown("**Editar descripción y temática**")
             descripcion = st.text_area("Descripción breve", value=f["descripcion_breve"] or "",

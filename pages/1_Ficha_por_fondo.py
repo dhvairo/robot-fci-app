@@ -330,7 +330,8 @@ for i in range(0, len(cab), 3):
         col.markdown(f"**{etiqueta}**  \n{valor}")
 fondo = fondo.copy()
 fondo['_ficha_unica'] = ficha
-st.markdown(f"**Descripción breve:** {calculos.descripcion_visible(fondo.to_dict())}")
+for etiqueta, texto in calculos.lineas_descripcion(fondo.to_dict()):
+    st.markdown(f"**{etiqueta}:** {texto}")
 for etiqueta, valor in complemento['extras']:
     st.markdown(f"**{etiqueta}:** {valor}")
 for aviso in complemento['avisos']:

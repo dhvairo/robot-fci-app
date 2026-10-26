@@ -43,23 +43,20 @@ for llave in list(st.session_state):
 memoria_clases = st.session_state.get('comparador_clases_memoria', [])
 if isinstance(memoria_clases, dict):
     st.session_state['comparador_clases_memoria'] = [n for n in nombres_clases if memoria_clases.get(n)]
-ver_todas = st.checkbox('Ver todas las clases', value=False)
 grupos_preferidos = [datos.clases_preferidas(g) for _, g in catalogo_clases.groupby('codigo_cnv')]
 preferidas = pd.concat(grupos_preferidos, ignore_index=True) if grupos_preferidos else catalogo_clases
-clases_defecto = sorted(calculos.agrupar_clases_comparador(preferidas).unique())
-if 'comparador_clases_memoria' not in st.session_state:
-    st.session_state['comparador_clases_memoria'] = clases_defecto
-if not ver_todas and any(g.attrs.get('sin_activas') for g in grupos_preferidos):
-    st.caption('Sin clases con movimiento comprobado en 30 días: se muestran todas.')
 elegidas = filtros.lista_fondos('Clase', {n: n for n in nombres_clases}, 'comparador_clases',
                                vacio_todos=False, conservar_orden=True)
 base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento, multiple=True)
 monedas = list(st.session_state['comparador_filtro_1'])
 clases = calculos.filtrar_moneda(catalogo_clases, monedas)
-if not ver_todas and elegidas == clases_defecto:
+if not elegidas:
+    # Sin elegir letras: clases con movimiento; elegir letras permite ver también las inactivas.
     clases = clases[clases.codigo_cafci.isin(preferidas.codigo_cafci)]
+    if any(g.attrs.get('sin_activas') for g in grupos_preferidos):
+        st.caption('Algunos fondos no tienen clases con movimiento en 30 días: se muestran todas sus clases.')
 base = calculos.proponer_fondos_comparador(base, clases, elegidas)
-if elegidas and not (ver_todas and elegidas == clases_defecto):
+if elegidas:
     clases = clases[calculos.agrupar_clases_comparador(clases).isin(elegidas)]
 nombres = base.set_index("codigo_cnv")["nombre"].to_dict()
 with st.expander("Fondos", expanded=False):
