@@ -28,6 +28,7 @@ def mostrar_tabla(tabla, **opciones):
         st.dataframe(tabla, **opciones)
 
 
+CORTE = "  " + chr(10)   # salto de línea de Markdown
 st.set_page_config(page_title="Sumar o quitar fondos", page_icon="📈", layout="wide")
 acceso.requerir()
 st.title("Sumar o quitar fondos")
@@ -186,10 +187,9 @@ if not mostrados.empty and st.session_state.get("fondo_elegido") is not None:
                 anotar(codigo, f["nombre"], "seguir", descripcion, idea, id_ficha)
     else:
         st.write("**Se sigue.**")
-        st.markdown("  
-".join(f"**{e}:** {t}" for e, t in calculos.lineas_descripcion(f.to_dict()))
-                    + ("  
-*(provisorio)*" if f["tematica_provisoria"] and not calculos.descripcion_fondo(f.to_dict())[1] else ""))
+        propio = not calculos.descripcion_fondo(f.to_dict())[1]
+        st.markdown(CORTE.join(f"**{e}:** {t}" for e, t in calculos.lineas_descripcion(f.to_dict()))
+                    + (CORTE + "*(provisorio)*" if f["tematica_provisoria"] and propio else ""))
         with st.form(f"editar_{codigo}"):
             st.markdown("**Editar descripción y temática**")
             descripcion = st.text_area("Descripción breve", value=f["descripcion_breve"] or "",

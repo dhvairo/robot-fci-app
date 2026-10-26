@@ -257,7 +257,7 @@ def pdf_ficha(fondo, clases, serie, rubros, tenencias, notas=(), costos=None):
         fondo = _fondos_pdf(pd.DataFrame([fondo])).iloc[0].to_dict()
     contenido = [f"Código CNV {fondo['codigo_cnv']} · {formato.texto_o_guion(fondo.get('estado'))}"]
     contenido += [f"{etiqueta}: {valor}" for etiqueta, valor in calculos.cabecera_fondo(fondo)]
-    contenido += [f"{e}: {t}" for e, t in calculos.lineas_descripcion(fondo)]
+    contenido += [f"{e}: {t}" for e, t in calculos.lineas_descripcion(fondo, marca=False)]
     if not clases.empty:
         valores = [c for c in clases if not c.endswith("%")]
         rendimientos = ["Clase"] + [c for c in clases if c.endswith("%")]

@@ -43,7 +43,8 @@ for llave in list(st.session_state):
 memoria_clases = st.session_state.get('comparador_clases_memoria', [])
 if isinstance(memoria_clases, dict):
     st.session_state['comparador_clases_memoria'] = [n for n in nombres_clases if memoria_clases.get(n)]
-grupos_preferidos = [datos.clases_preferidas(g) for _, g in catalogo_clases.groupby('codigo_cnv')]
+grupos_preferidos = ([datos.clases_preferidas(g) for _, g in catalogo_clases.groupby('codigo_cnv')]
+                     if 'codigo_cnv' in catalogo_clases else [])
 preferidas = pd.concat(grupos_preferidos, ignore_index=True) if grupos_preferidos else catalogo_clases
 elegidas = filtros.lista_fondos('Clase', {n: n for n in nombres_clases}, 'comparador_clases',
                                vacio_todos=False, conservar_orden=True)

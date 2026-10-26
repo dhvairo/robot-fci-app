@@ -947,11 +947,13 @@ def textos_fondo(fondo, ficha=None):
     return descripcion, idea
 
 
-def lineas_descripcion(fondo, ficha=None):
+def lineas_descripcion(fondo, ficha=None, marca=True):
     """Markdown de pantalla/PDF: con ficha una sola línea; sin ficha, lo escrito al pedir el fondo."""
-    descripcion, idea = textos_fondo(fondo, ficha)
     if descripcion_fondo(fondo, ficha)[1]:
-        return [('Descripción breve', descripcion)]
+        return [('Descripción breve', textos_fondo(fondo, ficha)[0])]
+    descripcion, idea = tematica(fondo if marca else dict(fondo, tematica_provisoria=False))
+    if descripcion != formato.VACIO and normalizar_complemento(descripcion) == normalizar_complemento(idea):
+        idea = formato.VACIO
     return [('Descripción breve', descripcion), ('Idea y temática', idea)]
 
 
