@@ -82,11 +82,13 @@ def opciones(fondos, nivel, anteriores=(), todas_monedas=True):
     return [TODOS[nivel], *sorted(base[CAMPOS[nivel]].dropna().unique())]
 
 
-def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False, inicial=None, multiple=False):
+def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", persistente=False, inicial=None, multiple=False, memorizar=None):
     import streamlit as st
     elegidas = []
     for nivel, (col, etiqueta) in enumerate(zip(st.columns(4), ("Fondos", "Moneda", "Rubro", "Categoría"))):
-        valores = opciones(fondos, nivel, elegidas, todas_monedas)
+        calcular = lambda: opciones(fondos, nivel, elegidas, todas_monedas)
+        valores = (memorizar(clave + '_opciones', calcular, nivel, tuple(elegidas), todas_monedas)
+                   if memorizar is not None else calcular())
         if nivel == 0 and inicial is not None:
             valores = ["Seguidos", "No seguidos", "Todos"]
         if not valores:
@@ -112,7 +114,9 @@ def mostrar(fondos, clave="ficha", todas_monedas=True, moneda_todos="Todas", per
         if recordar:
             st.session_state[memoria] = valor
         elegidas.append("Todas" if nivel == 1 and valor == moneda_todos else valor)
-    return aplicar(fondos, *elegidas)
+    calcular = lambda: aplicar(fondos, *elegidas)
+    return (memorizar(clave + '_filtrados', calcular, tuple(elegidas))
+            if memorizar is not None else calcular())
 
 
 def lista_fondos(etiqueta, nombres, clave, defecto=(), vacio_todos=True, mostrar_etiquetas=True, conservar_orden=False):

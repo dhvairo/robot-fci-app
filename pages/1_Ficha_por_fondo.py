@@ -277,7 +277,7 @@ if todos.empty:
     st.session_state["ficha_fondo"] = None
     st.info("No hay fondos en el catálogo.")
     st.stop()
-filtrados = todos if pendiente else filtros.mostrar(todos, inicial=inicial_seguimiento)
+filtrados = todos if pendiente else filtros.mostrar(todos, inicial=inicial_seguimiento, memorizar=rapidez.memorizar)
 filtrados = filtrados.sort_values("nombre", key=lambda s: s.str.casefold())
 codigos = filtrados["codigo_cnv"].tolist()
 if st.session_state.get("ficha_fondo") not in codigos:
@@ -285,10 +285,10 @@ if st.session_state.get("ficha_fondo") not in codigos:
 if filtrados.empty:
     st.info("No hay fondos para estos filtros y búsqueda.")
     st.stop()
-nombres = filtrados.set_index("codigo_cnv")["nombre"]
+nombres = dict(zip(filtrados["codigo_cnv"], filtrados["nombre"]))
 codigo = st.selectbox("Fondo", codigos, index=None, key="ficha_fondo",
                       placeholder="Elegí un fondo",
-                      format_func=lambda c: f"{nombres.loc[c]} · CNV {c}")
+                      format_func=lambda c: f"{nombres[c]} · CNV {c}")
 if codigo is None:
     st.info("Elegí un fondo para ver su ficha.")
     st.stop()
@@ -304,7 +304,8 @@ if st.session_state.get('_arranque_privado'):
         st.caption(f"Código CNV {codigo} · {fondo['estado']}")
         st.subheader("Clases")
         mostrar_tabla(formato.tabla(datos.clases_de_fondo(codigo), enteros=['codigo_cafci']), hide_index=True, width='stretch')
-        rapidez.esperar_sin_consultas((detalle,))
+        if not detalle.done():
+            rapidez.esperar_sin_consultas((detalle,))
         st.stop()
     rapidez._esperar(detalle)
 if not seguido and not pendiente:

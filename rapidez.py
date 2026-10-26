@@ -158,7 +158,7 @@ def inicio():
 
 def esperar_sin_consultas(tareas):
     """Solo observa Futures capturados; no consulta ni lanza trabajos."""
-    pendientes = tuple(t for t in tareas if t is not None and not t.done())
+    pendientes = tuple(t for t in tareas if t is not None)
     if not pendientes:
         return
     @st.fragment(run_every=0.5)
@@ -177,8 +177,7 @@ def preparar_fondo(codigo):
         codigos = clases.codigo_cafci.tolist()
         return en_paralelo((lambda: datos.ficha_unica(codigo),
             lambda: datos.foto_de_fondo(codigo), lambda: datos.serie(codigos),
-            lambda: datos.rendimientos_ultimos(codigos), lambda: datos.hechos(codigo),
-            lambda: datos._cartera_encabezado_comun(codigo)))
+            lambda: datos.rendimientos_ultimos(codigos), lambda: datos.hechos(codigo)))
     return _tarea_comun('DETALLE_FICHA_' + str(int(codigo)), cargar)
 
 
