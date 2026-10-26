@@ -300,11 +300,12 @@ puntual = None
 st.subheader(nombre)
 if st.session_state.get('_arranque_privado'):
     detalle = rapidez.preparar_fondo(codigo)
-    if pendiente or not detalle.done():
+    esperar_detalle = not detalle.done()
+    if pendiente or esperar_detalle:
         st.caption(f"Código CNV {codigo} · {fondo['estado']}")
         st.subheader("Clases")
         mostrar_tabla(formato.tabla(datos.clases_de_fondo(codigo), enteros=['codigo_cafci']), hide_index=True, width='stretch')
-        if not detalle.done():
+        if esperar_detalle:
             rapidez.esperar_sin_consultas((detalle,))
         st.stop()
     rapidez._esperar(detalle)
