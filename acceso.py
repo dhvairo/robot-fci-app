@@ -741,9 +741,7 @@ def preparar_ingreso(persona):
     import rapidez
 
     def cargar():
-        # El trabajador público no tiene session_state: usar directamente la caché común.
-        tarea = rapidez._lanzar('MARCA', lambda: dict(datos._marca_organizacion(
-            persona['organizacion'], _persona=persona)[1]), publica=True)
+        tarea = rapidez._lanzar('MARCA', lambda: datos.organizacion(persona), publica=True)
         try:
             if preferencias_activas():
                 calculos.preferencias_usuario(st.session_state)
