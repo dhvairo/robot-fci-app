@@ -399,7 +399,7 @@ for etiqueta, valor in complemento['extras']:
 for aviso in complemento['avisos']:
     st.caption(aviso)
 if not complemento['costos'].empty:
-    mostrar_tabla(complemento['costos'], hide_index=True, width='stretch')
+    mostrar_tabla(formato.tabla(complemento['costos']), hide_index=True, width='stretch')
 if ficha:
     fuente = {'gerente': 'web del gerente', 'cafci': 'CAFCI'}.get(ficha['fuente'], '')
     documento = ficha.get('url') or ''
