@@ -238,7 +238,8 @@ def leer_complemento(codigo):
     return None
 
 
-def mostrar_tematica_sugerida(codigo, fondo, ficha, complemento):
+def if not pendiente:
+    mostrar_tematica_sugerida(codigo, fondo, ficha, complemento):
     if not ficha:
         return
     objetivo = next((d for d in ficha['datos'] if d['campo'] == 'objetivo_politica'), {})
@@ -265,8 +266,14 @@ st.segmented_control("Vista", ["Tabla", "Tarjetas"], default="Tabla", key="ficha
 
 st.button("Restablecer", on_click=filtros.restablecer_ficha, args=(st.session_state,))
 
-todos = datos.fondos_ficha(incluir_no_seguidos=True)
+todos = datos.fondos_ficha(incluir_no_seguidos=True, progresivo=True)
 vista = todos.attrs.get('clasificacion')
+pendiente = todos.attrs.get('pendiente', False)
+if pendiente:
+    inicial_seguimiento = 'Todos'
+    tareas = (st.session_state['_arranque_privado'][3], st.session_state['_arranque_ficha'])
+    seguimiento = st.session_state.get('_arranque_seguimiento')
+    rapidez.esperar_sin_consultas((*tareas, seguimiento[2] if seguimiento else None))
 if todos.empty:
     st.session_state["ficha_fondo"] = None
     st.info("No hay fondos en el catálogo.")
@@ -291,7 +298,17 @@ nombre = fondo["nombre"]
 codigo = int(fondo["codigo_cnv"])
 seguido = bool(fondo["seguido"])
 puntual = None
-if not seguido:
+st.subheader(nombre)
+if st.session_state.get('_arranque_privado'):
+    detalle = rapidez.preparar_fondo(codigo)
+    if not detalle.done():
+        st.caption(f"Código CNV {codigo} · {fondo['estado']}")
+        st.subheader("Clases")
+        mostrar_tabla(datos.clases_de_fondo(codigo), hide_index=True, width='stretch')
+        rapidez.esperar_sin_consultas((detalle,))
+        st.stop()
+    rapidez._esperar(detalle)
+if not seguido and not pendiente:
     cache = st.session_state.setdefault("consulta_puntual", {})
     puntual = cache.get("fondos", {}).get(codigo)
     if st.button("Ver ahora sin seguir", disabled=puntual is not None):
@@ -321,7 +338,6 @@ clases_sel, rubros_sel = (), ()
 if puntual is not None:
     notas_pdf = [consulta_puntual.LEYENDA, *puntual["avisos"]]
 
-st.subheader(nombre)
 ficha = leer_complemento(codigo)
 complemento = calculos.integrar_ficha_unica(fondo.to_dict(), ficha)
 cab = complemento['cabecera']
@@ -331,7 +347,8 @@ for i in range(0, len(cab), 3):
 descripcion, idea = calculos.tematica(fondo.to_dict())
 st.markdown(f"**Descripción breve:** {complemento['descripcion']}")
 st.markdown(f"**Idea y temática:** {idea}")
-mostrar_tematica_sugerida(codigo, fondo, ficha, complemento)
+if not pendiente:
+    mostrar_tematica_sugerida(codigo, fondo, ficha, complemento)
 for etiqueta, valor in complemento['extras']:
     st.markdown(f"**{etiqueta}:** {valor}")
 for aviso in complemento['avisos']:
@@ -426,7 +443,9 @@ with datos.seccion_disponible():
     cart = datos.cartera(codigo, vista) if seguido else pd.DataFrame()
     if puntual is not None:
         enc, cart = puntual["encabezado"], puntual["cartera"]
-    if not seguido and puntual is None:
+    if pendiente:
+        st.caption('Cargando…')
+    elif not seguido and puntual is None:
         st.info(filtros.AVISO_NO_SEGUIDO)
     elif enc.empty or cart.empty:
         st.info("Todavía no hay cartera cargada para este fondo.")
@@ -512,7 +531,8 @@ with datos.seccion_disponible():
                      column_config={"Documento": st.column_config.LinkColumn("Documento", display_text="Abrir")})
 
 # El PDF recibe los mismos datos seleccionados y formateados que la pantalla.
-rapidez.pdf_a_pedido(
+if not pendiente:
+    rapidez.pdf_a_pedido(
     "ficha", (codigo, clases_sel, rubros_sel, puntual is not None),
     lambda: informe.pdf_ficha(fondo.to_dict(), tabla_pdf, serie_pdf, rubros_pdf, top_pdf, notas_pdf, costos_pdf),
     f"FCI_Ficha_{codigo}.pdf", "Descargar PDF", memorizado=puntual is None)

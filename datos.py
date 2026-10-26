@@ -682,7 +682,7 @@ class VistaCompartida(dict):
         return self
 
 
-def fondos_ficha(incluir_no_seguidos=False):
+def fondos_ficha(incluir_no_seguidos=False, progresivo=False):
     import rapidez
     try:
         privada = calculos.lectura_seguimiento_activa()
@@ -690,6 +690,20 @@ def fondos_ficha(incluir_no_seguidos=False):
         st.error('No se pudo leer el seguimiento de tu organización. Consulta rechazada.')
         st.stop()
         raise
+    tarea = st.session_state.get('_arranque_privado')
+    seguimiento = st.session_state.get('_arranque_seguimiento')
+    pendientes = progresivo and bool(tarea) and (
+        not tarea[3].done() or not st.session_state['_arranque_ficha'].done()
+        or (seguimiento is not None and not seguimiento[2].done()))
+    if pendientes:
+        salida = _fondos_ficha_comunes(True).copy()
+        if privada:
+            salida['seguido'] = False
+            for campo in ('descripcion_breve', 'tematica', 'tematica_provisoria'):
+                salida[campo] = None
+        salida.attrs['pendiente'] = True
+        salida.attrs['clasificacion'] = VistaCompartida(estado='pendiente')
+        return salida
     def componer():
         incluir = True if privada else incluir_no_seguidos
         tarea_ficha = st.session_state.get('_arranque_ficha') if incluir else None

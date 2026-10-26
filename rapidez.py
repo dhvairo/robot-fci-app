@@ -148,17 +148,38 @@ def inicio():
                             datos.ultimas_entradas, datos.estado_robot))
     tarea = _tarea_comun('INICIO', cargar)
     if _SERVIDOR_PUBLICO is not None and not tarea.done():
-        @st.fragment(run_every=0.5)
-        def pendiente():
-            if tarea.done():
-                st.rerun()
-            st.caption('Cargando…')
-        pendiente()
+        esperar_sin_consultas((tarea,))
         return None
     if not _esperar(tarea):
         return None
     resultado = tarea.result()
     return (_OPERACION_PUBLICA or resultado[0], *resultado[1:])
+
+
+def esperar_sin_consultas(tareas):
+    """Solo observa Futures capturados; no consulta ni lanza trabajos."""
+    pendientes = tuple(t for t in tareas if t is not None and not t.done())
+    if not pendientes:
+        return
+    @st.fragment(run_every=0.5)
+    def pendiente():
+        if all(t.done() for t in pendientes):
+            st.rerun()
+        st.caption('Cargando…')
+    pendiente()
+
+
+def preparar_fondo(codigo):
+    """Detalle público por fondo y versión, sin esperar en la pantalla."""
+    import datos
+    def cargar():
+        clases = datos.clases_de_fondo(codigo)
+        codigos = clases.codigo_cafci.tolist()
+        return en_paralelo((lambda: datos.ficha_unica(codigo),
+            lambda: datos.foto_de_fondo(codigo), lambda: datos.serie(codigos),
+            lambda: datos.rendimientos_ultimos(codigos), lambda: datos.hechos(codigo),
+            lambda: datos._cartera_encabezado_comun(codigo)))
+    return _tarea_comun('DETALLE_FICHA_' + str(int(codigo)), cargar)
 
 
 def filas_iniciales(dias):
@@ -306,8 +327,12 @@ def esperar_conexiones():
     _esperar(_tarea_comun('CONEXIONES', __import__('datos').preparar_conexiones))
 
 
+_ULTIMO_SELLO = globals().get('_ULTIMO_SELLO', float('-inf'))
+
+
 def _ciclo_servidor():
-    global _OPERACION_PUBLICA
+    global _OPERACION_PUBLICA, _ULTIMO_SELLO
+    import time
     import datos
     import operacion
     if not _POOLS_INICIADOS.is_set():
@@ -315,7 +340,10 @@ def _ciclo_servidor():
         _POOLS_INICIADOS.set()
     else:
         datos.preparar_conexiones()
-    datos.refrescar_comunes()
+    ahora = time.monotonic()
+    if ahora - _ULTIMO_SELLO >= 60:
+        datos.refrescar_comunes()
+        _ULTIMO_SELLO = ahora
     def inicio_publico():
         return en_paralelo((lambda: operacion.obtener(st.secrets), datos.resumen_base,
                             datos.ultimas_entradas, datos.estado_robot))
