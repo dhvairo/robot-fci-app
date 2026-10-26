@@ -95,7 +95,7 @@ def precalentar_sesion(persona):
     version = datos.version_clasificacion(persona)
     if (anterior and anterior[0] == identidad
             and anterior[1].get('_version_comun') == datos.version_comun()
-            and anterior[1].get('_version_clasificacion', version) == version):
+            and anterior[1].get('_version_clasificacion') == version):
         return anterior[3]
     contexto = datos._contexto_clasificacion(persona)
     contexto = dict(contexto, _version_comun=datos.version_comun(), _version_clasificacion=version)
@@ -131,9 +131,8 @@ def vista_inicial():
     if anterior is None:
         return None  # contratos puros y lectores sin ingreso conservan su camino
     persona = acceso.usuario()
-    contexto = dict(datos._contexto_clasificacion(persona), _version_comun=datos.version_comun())
-    if '_version_clasificacion' in anterior[1]:
-        contexto['_version_clasificacion'] = datos.version_clasificacion(persona)
+    contexto = dict(datos._contexto_clasificacion(persona), _version_comun=datos.version_comun(),
+                    _version_clasificacion=datos.version_clasificacion(persona))
     tarea = precalentar_sesion(persona)
     if contexto != st.session_state['_arranque_privado'][1]:
         return None

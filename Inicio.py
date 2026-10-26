@@ -118,6 +118,9 @@ def mostrar_inicio():
 
 
 try:
+    _estado_inicio = acceso._estado_rerun()
+    if _estado_inicio is not None:
+        _estado_inicio['inicio'] = _inicio_rerun
     _hoja_estilo = st.empty()
     estilo.presentar(_hoja_estilo, lambda: navegacion.mostrar(mostrar_inicio))
 finally:

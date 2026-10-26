@@ -35,7 +35,7 @@ def _estado_rerun():
 
 
 def lectura_privada(clave, contexto, leer, copiar=True):
-    """Copia de sesión por 5 minutos, después de validar Auth; no hay caché global de datos privados.
+    """Copia validada de sesión; marca/seguimiento/preferencia duran hasta invalidar, las otras 5 minutos.
 
     Excepciones: marca común U113 (organización/sello, cinco minutos) y vista U110 en datos._cargar_vista_carteras
     (llave organización/dueño + sello de versión; no depende de la persona).

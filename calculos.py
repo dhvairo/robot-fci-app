@@ -25,7 +25,7 @@ class ErrorClasificacion(ValueError):
 
 
 def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
-    """Lectura por sesión/identidad durante 5 minutos; escritura invalida tras commit."""
+    """Lectura por sesión/identidad; escritura invalida tras commit."""
     from acceso import lector_preferencias
     from preferencias_usuario import Preferencias, efectivas, ErrorPreferencia
     if cambios is not None or restablecer:
