@@ -462,7 +462,8 @@ def clases_comparador(fondos, moneda, leer_clases):
         {i: int(f['codigo_cnv']) for i, f in enumerate(registros)})
     resultado = resultado.reset_index(drop=True)
     resultado['nombre_fondo'] = resultado.codigo_cnv.map(fondos.set_index('codigo_cnv')['nombre'])
-    resultado['etiqueta'] = resultado['nombre_fondo'] + ' — ' + resultado['nombre'].str.split(' - ').str[-1]
+    resultado['etiqueta'] = (resultado['nombre_fondo'] + ' — '
+                            + resultado['nombre'].str.split(' - ').str[-1]).astype(object)
     return resultado
 
 
