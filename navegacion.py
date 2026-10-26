@@ -6,6 +6,7 @@ SECCIONES = {
     ),
     "Analizar": (
         ("pages/1_Ficha_por_fondo.py", "Ficha por fondo", ":material/description:"),
+        ("pages/11_Cambios_de_cartera.py", "Cambios de cartera", ":material/history:"),
         ("pages/2_Comparador.py", "Comparador", ":material/compare_arrows:"),
         ("pages/10_Comparar_carteras.py", "Comparar carteras", ":material/join_inner:"),
         ("pages/3_Buscador_de_instrumentos.py", "Buscador de instrumentos", ":material/search:"),
