@@ -27,7 +27,7 @@ def _estado_rerun():
         return None
     anterior = getattr(ctx, '_seguimiento_rerun', None)
     if anterior is None or anterior[0] is not ctx.cursors:
-        anterior = (ctx.cursors, {})
+        anterior = (ctx.cursors, {'inicio': time.perf_counter()})
         ctx._seguimiento_rerun = anterior
         import logging
         logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO RERUN INICIO')
@@ -50,13 +50,14 @@ def lectura_privada(clave, contexto, leer, copiar=True):
     ahora = time.monotonic()
     inicio = time.perf_counter()
     for k in list(cache):
-        if ahora - cache[k][0] >= 300:
+        tipo = k[0][0] if isinstance(k[0], tuple) else k[0]
+        if tipo not in ('marca', 'seguimiento', 'preferencia') and ahora - cache[k][0] >= 300:
             del cache[k]
     acierto = llave in cache
     if llave not in cache:
         resultado = leer()  # No guardar fallos ni operaciones sin commit.
-        if len(cache) >= 12:
-            cache.clear()
+        if len(cache) >= 32:
+            del cache[next(iter(cache))]
         cache[llave] = (ahora, deepcopy(resultado) if copiar else resultado)
     resultado = deepcopy(cache[llave][1]) if copiar else cache[llave][1]
     tipo = clave[0] if isinstance(clave, tuple) else clave
@@ -81,7 +82,7 @@ def memoria_derivada(llave, calcular):
         del cache[k]
     if llave not in cache:
         valor = calcular()
-        while len(cache) >= 40:
+        while len(cache) >= 128:
             del cache[next(iter(cache))]
         cache[llave] = (ahora, valor)
     return cache[llave][1]
@@ -105,6 +106,17 @@ def registrar_cache(nombre, acierto, ms=0):
         estado[contador] = estado.get(contador, 0) + 1
     logging.getLogger('seguimiento').log(logging.WARNING,
         'SEGUIMIENTO CACHE %s %s %.3f_ms', nombre, 'ACIERTO' if acierto else 'FALLO', ms)
+
+
+def registrar_derivado(nombre, acierto, ms=0):
+    """Distingue cálculos nuevos de lecturas fallidas; conserva ambos contadores."""
+    import logging
+    estado = _estado_rerun()
+    if estado is not None:
+        contador = 'derivados_aciertos' if acierto else 'derivados_fallos'
+        estado[contador] = estado.get(contador, 0) + 1
+    logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO CACHE_DERIVADA %s %s %.3f_ms',
+        nombre, 'ACIERTO' if acierto else 'FALLO', ms)
 
 
 def roles_activos():
@@ -833,8 +845,8 @@ def requerir(accion='consultar'):
             persona = ingresar(correo, clave)
             if not persona['cambio_obligatorio'] and marco:
                 import rapidez
-                rapidez.precalentar_sesion(persona)
                 preparar_ingreso(persona)
+                rapidez.precalentar_sesion(persona)
             st.rerun()
         except ErrorAcceso:
             st.error("No se pudo ingresar. Revisá el correo y la clave.")

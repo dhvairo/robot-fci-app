@@ -47,8 +47,7 @@ def preferencias_usuario(sesion, *, cambios=None, restablecer=False):
         if cambios is not None:
             plan_guardado(contexto, cambios)
         cache = sesion.get('preferencias_usuario_cache')
-        acierto = (cache is not None and cache['identidad'] == identidad
-                   and time.monotonic() - cache.get('leida', 0) < 300)
+        acierto = cache is not None and cache['identidad'] == identidad
         from acceso import registrar_cache
         registrar_cache('PREFERENCIAS', acierto)
         if not acierto:

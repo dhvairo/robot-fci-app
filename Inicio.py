@@ -124,7 +124,8 @@ finally:
     rapidez.registrar_agregado(_inicio_rerun)
     _cache_rerun = acceso._estado_rerun() or {}
     logging.getLogger('seguimiento').log(logging.WARNING,
-        'SEGUIMIENTO TIEMPO RERUN_TOTAL %.3f_ms cache_aciertos=%d cache_fallos=%d pagina=%s',
+        'SEGUIMIENTO TIEMPO RERUN_TOTAL %.3f_ms cache_aciertos=%d cache_fallos=%d derivados_aciertos=%d derivados_fallos=%d pagina=%s',
         (time.perf_counter() - _inicio_rerun) * 1000,
         _cache_rerun.get('cache_aciertos', 0), _cache_rerun.get('cache_fallos', 0),
+        _cache_rerun.get('derivados_aciertos', 0), _cache_rerun.get('derivados_fallos', 0),
         _cache_rerun.get('pagina', 'Inicio'))

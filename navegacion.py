@@ -44,9 +44,9 @@ def mostrar(inicio):
                 rapidez.esperar_conexiones()
             persona = acceso._validar_sesion()
             if not persona['cambio_obligatorio']:
+                acceso.preparar_ingreso(persona)
                 if servidor and persona['rol'] in ('admin', 'asesor', 'cliente'):
                     rapidez.precalentar_sesion(persona)
-                acceso.preparar_ingreso(persona)
         activa = acceso.preferencias_activas()
         inicial = 'Inicio'
         if activa and acceso.usuario():
@@ -78,4 +78,6 @@ def mostrar(inicio):
     estado = acceso._estado_rerun()
     if estado is not None:      # solo el nombre de la pantalla, para el registro de tiempos por pantalla
         estado['pagina'] = str(getattr(pagina, 'url_path', '') or 'Inicio')
+        import rapidez
+        rapidez.al_entrar(estado['pagina'])
     pagina.run()

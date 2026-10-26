@@ -92,12 +92,13 @@ def precalentar_sesion(persona):
     import datos
     identidad = tuple(sorted(dict(persona).items()))
     anterior = st.session_state.get('_arranque_privado')
+    version = datos.version_clasificacion(persona)
     if (anterior and anterior[0] == identidad
             and anterior[1].get('_version_comun') == datos.version_comun()
-            and time.monotonic() - anterior[2] < 300):
+            and anterior[1].get('_version_clasificacion', version) == version):
         return anterior[3]
     contexto = datos._contexto_clasificacion(persona)
-    contexto = dict(contexto, _version_comun=datos.version_comun())
+    contexto = dict(contexto, _version_comun=datos.version_comun(), _version_clasificacion=version)
     precalentar_comunes()
     def cargar():
         # No esperar catálogo, Gestión, Filas ni imports para tener la clasificación.
@@ -131,6 +132,8 @@ def vista_inicial():
         return None  # contratos puros y lectores sin ingreso conservan su camino
     persona = acceso.usuario()
     contexto = dict(datos._contexto_clasificacion(persona), _version_comun=datos.version_comun())
+    if '_version_clasificacion' in anterior[1]:
+        contexto['_version_clasificacion'] = datos.version_clasificacion(persona)
     tarea = precalentar_sesion(persona)
     if contexto != st.session_state['_arranque_privado'][1]:
         return None
@@ -172,7 +175,10 @@ def esperar_sin_consultas(tareas):
 def preparar_fondo(codigo):
     """Detalle público por fondo y versión, sin esperar en la pantalla."""
     import datos
+    import acceso
+    acceso.registrar_cache('DETALLE_FICHA', datos._detalle_guardado(codigo, 'foto') is not None)
     def cargar():
+        datos.precargar_detalle(codigo)
         clases = datos.clases_de_fondo(codigo)
         codigos = clases.codigo_cafci.tolist()
         return en_paralelo((lambda: datos.ficha_unica(codigo),
@@ -228,7 +234,12 @@ def grafico_memorizado(clave, figura, *seleccion):
     def construir():
         proto = PlotlyChartProto()
         proto.theme = 'streamlit'
-        proto.spec = plotly.io.to_json(figura, validate=False)
+        if isinstance(figura, dict):
+            import json
+            from plotly.utils import PlotlyJSONEncoder
+            proto.spec = json.dumps(figura, cls=PlotlyJSONEncoder, separators=(',', ':'))
+        else:
+            proto.spec = plotly.io.to_json(figura, validate=False)
         proto.config = '{}'
         return proto
     proto = memorizar(clave + '_grafico', construir, *seleccion)
@@ -278,8 +289,8 @@ def memorizar(clave, calcular, *seleccion, contexto=None):
         with calculos.medir_seguimiento(clave.upper()):
             return calcular()
     inicio = time.perf_counter()
-    resultado = acceso.memoria_derivada((clave, identidad, datos.version_comun(), seleccion), construir)
-    acceso.registrar_cache(clave.upper(), not fallo, (time.perf_counter() - inicio) * 1000)
+    resultado = acceso.memoria_derivada((clave, identidad, datos.version_clasificacion(persona), seleccion), construir)
+    acceso.registrar_derivado(clave.upper(), not fallo, (time.perf_counter() - inicio) * 1000)
     return resultado
 
 
@@ -295,6 +306,26 @@ def registrar_agregado(inicio):
             logging.getLogger('seguimiento').warning('SEGUIMIENTO TIEMPO AGREGAR_FONDO_%s %.3f_ms',
                 nombre, (time.perf_counter() - inicio) * 1000)
         anteriores[nombre] = actual
+
+
+def iniciar_ficha(codigo):
+    """El cronómetro sobrevive las esperas y los reruns hasta dibujar toda la ficha."""
+    import time
+    import acceso
+    anterior = st.session_state.get('_medicion_ficha')
+    if anterior is None or anterior[0] != codigo:
+        inicio = (acceso._estado_rerun() or {}).get('inicio', time.perf_counter())
+        st.session_state['_medicion_ficha'] = (codigo, inicio, False)
+
+
+def completar_ficha(codigo):
+    import time
+    import logging
+    anterior = st.session_state.get('_medicion_ficha')
+    if anterior and anterior[0] == codigo and not anterior[2]:
+        logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO TIEMPO FICHA_COMPLETA %.3f_ms',
+            (time.perf_counter() - anterior[1]) * 1000)
+        st.session_state['_medicion_ficha'] = (*anterior[:2], True)
 
 
 from threading import Event
@@ -340,7 +371,7 @@ def _ciclo_servidor():
     else:
         datos.preparar_conexiones()
     ahora = time.monotonic()
-    if ahora - _ULTIMO_SELLO >= 60:
+    if _ULTIMO_SELLO == float('-inf'):
         datos.refrescar_comunes()
         _ULTIMO_SELLO = ahora
     def inicio_publico():
@@ -354,6 +385,22 @@ def _ciclo_servidor():
     # Conserva los clics calientes sin hacer esperar a Inicio ni al catálogo.
     _tarea_comun('HISTORIA', lambda: datos._serie_comun(datos.version_comun()))
     _OPERACION_PUBLICA = operacion.obtener(st.secrets)  # Mantiene el TTL propio de Actions.
+
+
+def al_entrar(pagina):
+    """Un sello al cambiar de pantalla, nunca por temporizadores ni reruns de widgets."""
+    import time
+    import os
+    import datos
+    anterior = st.session_state.get('_pantalla_comunes')
+    st.session_state['_pantalla_comunes'] = pagina
+    if (pagina != anterior and _SERVIDOR_PUBLICO is not None
+            and os.environ.get('ROBOT_FCI_SIN_RED') != '1' and time.monotonic() - _ULTIMO_SELLO >= 60):
+        def refrescar():
+            global _ULTIMO_SELLO
+            datos.refrescar_comunes()
+            _ULTIMO_SELLO = time.monotonic()
+        _recurso_tarea('SELLO_PANTALLA', int(time.monotonic() // 60), refrescar)
 
 
 @st.cache_resource(show_spinner=False)

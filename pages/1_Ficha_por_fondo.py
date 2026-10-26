@@ -1,6 +1,4 @@
 """Ficha por fondo: clases, rendimientos, evolución, cartera clasificada y hechos relevantes."""
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 import recarga
@@ -280,6 +278,7 @@ nombre = fondo["nombre"]
 codigo = int(fondo["codigo_cnv"])
 seguido = bool(fondo["seguido"])
 puntual = None
+rapidez.iniciar_ficha(codigo)
 st.subheader(nombre)
 if st.session_state.get('_arranque_privado'):
     detalle = rapidez.preparar_fondo(codigo)
@@ -408,11 +407,11 @@ with datos.seccion_disponible():
                     ser = calculos.base_100(ser, ser["fecha"].min())
                     fig = None
                     if ser["base 100"].notna().any():
-                        fig = go.Figure([go.Scatter(x=g['fecha'], y=g['base 100'], name=n,
-                            mode='lines+markers') for n, g in ser.groupby('nombre', sort=False)])
-                        fig.update_layout(title="Evolución de la cuotaparte (base 100 en la primera fecha válida)")
-                        fig.update_traces(connectgaps=False)
-                        fig.update_layout(legend_title_text="", margin=dict(t=50, b=10))
+                        fig = dict(data=[dict(type='scatter', x=g['fecha'].astype(str).tolist(),
+                            y=g['base 100'].astype(object).where(g['base 100'].notna(), None).tolist(),
+                            name=n, mode='lines+markers', connectgaps=False) for n, g in ser.groupby('nombre', sort=False)],
+                            layout=dict(title=dict(text="Evolución de la cuotaparte (base 100 en la primera fecha válida)"),
+                                legend=dict(title=dict(text="")), margin=dict(t=50, b=10)))
                         fig = formato.plotly_es(fig, fechas_x=True)
                     return ser, fig
                 ser, fig = memorizar("ficha_serie", armar_serie, codigo, clases_sel)
@@ -462,10 +461,10 @@ with datos.seccion_disponible():
             colores = [m[1] if (not elegidos or r in elegidos) else m[1] + "40"
                        for m, r in zip(marcas, resumen["categoria_resumen"])]
             def armar_torta():
-                fig = go.Figure(go.Pie(labels=resumen["categoria_resumen"], values=resumen["pct_pn"], hole=0.4, sort=False,
-                                       marker=dict(colors=colores),
-                                       pull=[0.08 if r in elegidos else 0 for r in resumen["categoria_resumen"]]))
-                fig.update_layout(title="Por rubro", margin=dict(t=50, b=10))
+                fig = dict(data=[dict(type='pie', labels=resumen['categoria_resumen'].tolist(),
+                    values=resumen['pct_pn'].tolist(), hole=0.4, sort=False, marker=dict(colors=colores),
+                    pull=[0.08 if r in elegidos else 0 for r in resumen['categoria_resumen']])],
+                    layout=dict(title=dict(text="Por rubro"), margin=dict(t=50, b=10)))
                 return formato.plotly_es(fig)
             rapidez.grafico_memorizado("ficha_torta_json", memorizar("ficha_torta", armar_torta, codigo, rubros_sel),
                 codigo, rubros_sel, id(puntual) if puntual else None)
@@ -473,8 +472,9 @@ with datos.seccion_disponible():
         det = det[det["pct_pn"] > 0].sort_values("pct_pn")
         with g2:
             rapidez.grafico_memorizado("ficha_barras_json", memorizar("ficha_barras", lambda: formato.plotly_es(
-                go.Figure(go.Bar(x=det['pct_pn'], y=det['categoria_detallada'], orientation='h')).update_layout(
-                    title="Por rubro, moneda e indexación (% del PN)", xaxis_title="% del PN", yaxis_title="")),
+                dict(data=[dict(type='bar', x=det['pct_pn'].tolist(), y=det['categoria_detallada'].tolist(), orientation='h')],
+                    layout=dict(title=dict(text="Por rubro, moneda e indexación (% del PN)"),
+                        xaxis=dict(title=dict(text="% del PN")), yaxis=dict(title=dict(text=""))))),
                 codigo), codigo, id(puntual) if puntual else None)
         st.pills("Rubros (tocá uno o más para ver solo sus instrumentos; tocá de nuevo para sacarlo)",
                  list(etiquetas), format_func=etiquetas.get, selection_mode="multi", key=f"rubros_{codigo}")
@@ -525,3 +525,4 @@ if not pendiente:
     "ficha", (codigo, clases_sel, rubros_sel, puntual is not None),
     lambda: informe.pdf_ficha(fondo.to_dict(), tabla_pdf, serie_pdf, rubros_pdf, top_pdf, notas_pdf, costos_pdf),
     f"FCI_Ficha_{codigo}.pdf", "Descargar PDF", memorizado=puntual is None)
+    rapidez.completar_ficha(codigo)

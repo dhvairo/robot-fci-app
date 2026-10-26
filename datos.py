@@ -551,7 +551,7 @@ def _componer_con_sello(filas_fuente, contexto_validado, con_sello):
 def vista_carteras():
     import acceso
     contexto = _contexto_clasificacion(acceso.usuario())
-    return acceso.lectura_privada(('vista_carteras', version_comun()), contexto,
+    return acceso.lectura_privada(('vista_carteras', version_clasificacion(contexto)), contexto,
                                  _vista_carteras_sin_cache, copiar=False)
 
 
@@ -575,6 +575,7 @@ def _vista_carteras_sin_cache():
 
 _VISTAS_ORGANIZACION = globals().get('_VISTAS_ORGANIZACION', {})
 _CERROJO_VISTAS = globals().get('_CERROJO_VISTAS', Lock())
+_VERSIONES_CLASIFICACION = globals().get('_VERSIONES_CLASIFICACION', {})
 _COLUMNAS_HUELLA = ('fuente_cartera', 'codigo_cnv', 'fecha_cartera', 'orden', 'instrumento', 'pct_pn', 'rubro_cnv',
                     'categoria_resumen', 'categoria_detallada', 'moneda', 'indexacion', 'sin_clasificar')
 
@@ -602,7 +603,18 @@ def _sello_privado(contexto):
 def invalidar_vista_organizacion(contexto):
     """Guardar una clasificación descarta lo compartido de esa organización y dueño."""
     with _CERROJO_VISTAS:
-        _VISTAS_ORGANIZACION.pop((contexto.get('organizacion'), contexto.get('dueno')), None)
+        llave = (contexto.get('organizacion'), contexto.get('dueno'))
+        _VISTAS_ORGANIZACION.pop(llave, None)
+        _VERSIONES_CLASIFICACION[llave] = _VERSIONES_CLASIFICACION.get(llave, 0) + 1
+
+
+def version_clasificacion(contexto):
+    """Versión local compartida: las otras sesiones ven una edición al siguiente clic."""
+    from datetime import date
+    with _CERROJO_VISTAS:
+        generacion = sum(v for (organizacion, _), v in _VERSIONES_CLASIFICACION.items()
+                         if organizacion == contexto.get('organizacion'))
+        return (date.today().isoformat(), version_comun(), generacion)
 
 
 def _cargar_vista_carteras(contexto_validado=None):
@@ -610,20 +622,17 @@ def _cargar_vista_carteras(contexto_validado=None):
 
     Sustituye la regla «jamás caché global» solo para esta vista: su contenido depende únicamente de
     (organización, dueño) y de los datos comunes, nunca de la persona (admin y asesor ven lo mismo), y el
-    contexto llega ya validado por _contexto_clasificacion. La llave incluye el sello de versión; si no
-    cambió se sirve lo guardado sin bajar clasificacion_leer. Un único cálculo a la vez por organización.
+    contexto llega ya validado por _contexto_clasificacion. La llave incluye día, versión pública y
+    generación local de ediciones; un acierto no lee sello ni fuente. Un cálculo a la vez por organización.
     """
     import acceso
     contexto = (dict(contexto_validado) if contexto_validado is not None
                 else _contexto_clasificacion(acceso.usuario()))
-    fuente = _fuente_carteras_comun()
-    huella = _huella_comun(fuente)
-    if huella is None or contexto.get('rol') not in ('admin', 'asesor'):
+    if contexto.get('rol') not in ('admin', 'asesor'):
+        fuente = _fuente_carteras_comun()
         return _calcular_vista(fuente, contexto, False)[0]
     llave = (contexto['organizacion'], contexto['dueno'])
-    sello_previo = (huella, _sello_privado(contexto))
-    if sello_previo[1] is None:
-        return _calcular_vista(fuente, contexto, False)[0]
+    sello_previo = version_clasificacion(contexto)
     with _CERROJO_VISTAS:
         registro = _VISTAS_ORGANIZACION.get(llave)
         if registro and registro['sello'] == sello_previo:
@@ -639,14 +648,17 @@ def _cargar_vista_carteras(contexto_validado=None):
         import rapidez
         return tarea.result(timeout=rapidez.TIEMPO_ESPERA)
     try:
+        fuente = _fuente_carteras_comun()
         vista, sello = _calcular_vista(fuente, contexto, True)
         with _CERROJO_VISTAS:
             actual = _VISTAS_ORGANIZACION.get(llave)
             if actual and actual.get('tarea') is tarea:
                 guardable = sello is not None and vista.get('estado') == 'habilitado'
                 _VISTAS_ORGANIZACION[llave] = {
-                    'sello': (huella, json.dumps(sello, sort_keys=True, default=str)) if guardable else None,
+                    'sello': sello_previo if guardable else None,
                     'vista': vista if guardable else None, 'tarea': None, 'tarea_sello': None}
+                if not guardable:
+                    _VISTAS_ORGANIZACION.pop(llave, None)
         tarea.set_result(vista)
         return vista
     except BaseException as error:
@@ -777,6 +789,14 @@ def cartera(codigo_cnv, vista=None):
 
 def cartera_encabezado(codigo_cnv, vista=None):
     vista = vista_carteras() if vista is None else vista
+    if vista['estado'] == 'habilitado':
+        # Ya cargadas para todas las carteras; evita otro viaje por fondo.
+        cabeceras = _cabeceras_carteras_comunes()
+        comun = cabeceras[cabeceras.codigo_cnv.eq(codigo_cnv)].copy()
+        if not comun.empty:
+            if 'moneda' not in comun:
+                comun['moneda'] = None
+            return calculos.encabezado_efectivo(comun.drop(columns=['codigo_cnv']), vista, codigo_cnv)
     return calculos.encabezado_efectivo(_cartera_encabezado_comun(codigo_cnv), vista, codigo_cnv)
 
 
@@ -945,6 +965,63 @@ _SELLO_COMUN = globals().get('_SELLO_COMUN')
 _HISTORIAS_COMPLETAS = globals().get('_HISTORIAS_COMPLETAS', {})
 _ULTIMOS_COMUNES = globals().get('_ULTIMOS_COMUNES', {})
 _ULTIMOS_CAMBIOS = globals().get('_ULTIMOS_CAMBIOS', {})
+_DETALLES_FICHA = globals().get('_DETALLES_FICHA', {})
+
+
+def _detalle_guardado(codigo, clave):
+    with _CERROJO_COMUNES:
+        return _DETALLES_FICHA.get((version_comun(), int(codigo)), {}).get(clave)
+
+
+def precargar_detalle(codigo):
+    """Un viaje público por fondo: foto, rendimientos, hechos, ficha e historia faltante.
+
+    Los SELECT son los mismos de los lectores individuales. JSON agrupa el transporte;
+    los consumidores reciben sus tablas habituales. Ningún dato privado ni Storage.
+    """
+    version = version_comun()
+    consultas = dict(foto=_SQL_FOTO_FONDO, rendimientos=_SQL_REND_FONDO,
+                     hechos=_SQL_HECHOS_FONDO, ficha=_SQL_FICHA_UNICA)
+    with _CERROJO_COMUNES:
+        if (version, int(codigo)) in _DETALLES_FICHA:
+            return
+        completa = _HISTORIAS_COMPLETAS.get(version)
+    if completa is None:
+        consultas['historia'] = ('select v.codigo_cafci, v.fecha, v.cuotaparte, v.patrimonio '
+            'from valores_diarios_ultima v join clases c using (codigo_cafci) '
+            'where c.codigo_cnv = %s order by v.fecha')
+    def leer():
+        sql = 'select ' + ', '.join(
+            f"(select coalesce(jsonb_agg(to_jsonb(q)), '[]'::jsonb) from ({consulta}) q) as {clave}"
+            for clave, consulta in consultas.items())
+        return _ejecutar(sql, (int(codigo),) * len(consultas)).iloc[0].to_dict()
+    try:
+        filas = leer()
+    except psycopg.errors.InsufficientPrivilege:
+        # Conserva el aviso previo cuando las tablas de Ficha Única aún no tienen SELECT.
+        consultas.pop('ficha')
+        filas = leer()
+        filas['ficha_sin_permiso'] = True
+    _presupuesto_lectura(len(json.dumps(filas, default=str).encode('utf-8')), 'detalle_ficha_json')
+    tablas = {}
+    columnas_vacias = dict(foto=['codigo_cafci', 'nombre', 'moneda'],
+        rendimientos=['codigo_cafci', 'fecha', 'diario', 'dias_7', 'dias_30', 'mes',
+            'anio', 'meses_12', 'revisar', 'nota', 'cuotaparte', 'patrimonio'],
+        hechos=['fecha', 'tipo', 'descripcion', 'link'],
+        historia=['codigo_cafci', 'fecha', 'cuotaparte', 'patrimonio'])
+    for clave, registros in filas.items():
+        if clave == 'ficha_sin_permiso':
+            tablas[clave] = registros
+            continue
+        tabla = pd.DataFrame(registros) if registros else pd.DataFrame(columns=columnas_vacias.get(clave, []))
+        for campo in ('fecha', 'fecha_referencia'):
+            if campo in tabla:
+                tabla[campo] = pd.to_datetime(tabla[campo]).dt.date
+        tablas[clave] = tabla
+    with _CERROJO_COMUNES:
+        _DETALLES_FICHA[version, int(codigo)] = tablas
+        while len(_DETALLES_FICHA) > 4096:
+            del _DETALLES_FICHA[next(iter(_DETALLES_FICHA))]
 
 
 def version_comun():
@@ -1028,6 +1105,7 @@ def _limpiar_comunes():
         _HISTORIAS_COMPLETAS.clear()
         _ULTIMOS_COMUNES.clear()
         _ULTIMOS_CAMBIOS.clear()
+        _DETALLES_FICHA.clear()
 
 
 def consultar(sql, params=None, registrar=True):
@@ -1115,7 +1193,7 @@ def _fondos_ficha_comunes(incluir_no_seguidos=False):
 def _cabeceras_carteras_comunes():
     """Misma lectura para el resumen legado y la vista efectiva U110."""
     return consultar(
-        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio, coalesce(to_jsonb(x)->>'fuente', 'cnv') as fuente from carteras_fechas x "
+        "select x.codigo_cnv, x.fecha_cartera, x.patrimonio, x.moneda, coalesce(to_jsonb(x)->>'fuente', 'cnv') as fuente from carteras_fechas x "
         "join (select codigo_cnv, max(fecha_cartera) as fecha_cartera from carteras_fechas group by codigo_cnv) u "
         "using (codigo_cnv, fecha_cartera) join fondos f using (codigo_cnv) where f.seguido")
 
@@ -1179,17 +1257,11 @@ def _indice_clases_comunes(version):
 
 def foto_de_fondo(codigo_cnv):
     """Datos CAFCI y costos del catálogo; no requiere historia ni cartera."""
+    precargado = _detalle_guardado(codigo_cnv, 'foto')
+    if precargado is not None:
+        return precargado.copy()
     return consultar(
-        "select c.codigo_cafci, c.nombre, c.moneda, p.fecha_dato as fecha, "
-        "case when p.marca_estado = '' then p.cuotaparte end as cuotaparte, "
-        "case when p.marca_estado = '' then p.patrimonio end as patrimonio, "
-        "case when p.marca_estado = '' then p.rend_mes end as mes, "
-        "case when p.marca_estado = '' then p.rend_anio end as anio, "
-        "case when p.marca_estado = '' then p.rend_12m end as meses_12, "
-        "p.calificacion, p.marca_estado, c.honorarios_sg, c.honorarios_sd, c.gastos_ordinarios, "
-        "c.comision_ingreso, c.comision_rescate, c.comision_transferencia, c.honorarios_exito "
-        "from clases c left join foto_clases p using (codigo_cafci) "
-        "where c.codigo_cnv=%s and c.vigente_hasta is null order by c.nombre", (codigo_cnv,))
+        _SQL_FOTO_FONDO, (codigo_cnv,))
 
 
 def clases_seguidas():
@@ -1227,6 +1299,9 @@ def _serie_comun(version, _fallo=None):
 @st.cache_resource(max_entries=4096, show_spinner=False)
 def _historia_fondo_comun(version, codigo, _fallo=None):
     """Clave pública por versión/fondo; reutiliza U118 o lee solo el fondo faltante."""
+    precargada = _detalle_guardado(codigo, 'historia') if version == version_comun() else None
+    if precargada is not None:
+        return precargada.copy()
     if _fallo is not None:
         _fallo.append(True)
     with _CERROJO_COMUNES:
@@ -1284,16 +1359,13 @@ def rendimientos_ultimos(codigos_cafci):
 
 @st.cache_resource(max_entries=4096, show_spinner=False)
 def _rendimientos_fondo_comun(version, codigo, _fallo=None):
+    precargado = _detalle_guardado(codigo, 'rendimientos')
+    if precargado is not None:
+        return precargado.copy()
     if _fallo is not None:
         _fallo.append(True)
     return consultar(
-        "select r.codigo_cafci, r.fecha, r.diario, r.dias_7, r.dias_30, "
-        "r.mes, r.anio, r.meses_12, r.revisar, r.nota, v.cuotaparte, v.patrimonio "
-        "from clases c join lateral (select codigo_cafci, fecha, diario, dias_7, dias_30, "
-        "mes, anio, meses_12, revisar, nota from rendimientos "
-        "where codigo_cafci = c.codigo_cafci order by fecha desc limit 1) r on true "
-        "left join valores_diarios_ultima v on v.codigo_cafci = r.codigo_cafci and v.fecha = r.fecha "
-        "where c.codigo_cnv = %s order by r.codigo_cafci", (codigo,), registrar=False)
+        _SQL_REND_FONDO, (codigo,), registrar=False)
 
 
 def _cartera_comun(codigo_cnv):
@@ -1310,8 +1382,10 @@ def _cartera_encabezado_comun(codigo_cnv):
 
 
 def hechos(codigo_cnv):
-    return consultar("select fecha, tipo, descripcion, link from hechos_relevantes "
-                     "where codigo_cnv = %s order by fecha desc, documento desc", (codigo_cnv,))
+    precargado = _detalle_guardado(codigo_cnv, 'hechos')
+    if precargado is not None:
+        return precargado.copy()
+    return consultar(_SQL_HECHOS_FONDO, (codigo_cnv,))
 
 
 def _buscar_instrumentos_comunes(texto):
@@ -1427,23 +1501,13 @@ def pedidos_recientes(limite=60):
 @st.cache_data(ttl=600, max_entries=256, show_spinner=False)
 def ficha_unica(codigo_cnv):
     """Una sola consulta por fondo; fuera del precalentado y sin Storage."""
+    if _detalle_guardado(codigo_cnv, 'ficha_sin_permiso'):
+        return {'estado': 'sin_permiso'}
+    precargado = _detalle_guardado(codigo_cnv, 'ficha')
+    if precargado is not None:
+        return {'estado': 'disponible', 'ficha': None if precargado.empty else precargado.iloc[0].to_dict()}
     try:
-        filas = _ejecutar("""
-            select f.fecha_referencia, f.url, f.fuente, f.estado_lectura,
-              coalesce((select jsonb_agg(to_jsonb(c) || jsonb_build_object(
-                            'calificacion', p.calificacion, 'marca_estado', p.marca_estado) order by c.nombre)
-                        from clases c left join foto_clases p using (codigo_cafci)
-                        where c.codigo_cnv = f.codigo_cnv
-                        and c.vigente_hasta is null), '[]'::jsonb) as clases,
-              coalesce((select jsonb_agg(to_jsonb(d) - 'ficha_id' order by d.campo)
-                        from ficha_datos d where d.ficha_id = f.id), '[]'::jsonb) as datos,
-              coalesce((select jsonb_agg(to_jsonb(h) - 'ficha_id' order by h.concepto, h.clase)
-                        from ficha_honorarios h where h.ficha_id = f.id), '[]'::jsonb) as honorarios,
-              coalesce((select jsonb_agg(to_jsonb(t) - 'ficha_id' order by t.tipo, t.orden)
-                        from ficha_tenencias t where t.ficha_id = f.id), '[]'::jsonb) as tenencias
-            from fichas_unicas f where f.codigo_cnv = %s
-            order by f.fecha_referencia desc, f.fecha_captura desc, f.id desc limit 1
-        """, (int(codigo_cnv),))
+        filas = _ejecutar(_SQL_FICHA_UNICA, (int(codigo_cnv),))
     except psycopg.errors.InsufficientPrivilege:
         return {'estado': 'sin_permiso'}
     return {'estado': 'disponible', 'ficha': None if filas.empty else filas.iloc[0].to_dict()}
@@ -1494,3 +1558,12 @@ def anotar_pedido(codigo_cnv, accion, descripcion=None, idea=None, id_ficha=None
         raise ErrorPedido("No se pudo anotar el pedido: " + " ".join(str(e).replace(url, "***").split())[:160])
     acceso.invalidar_lecturas_privadas()
     return fila[0]
+
+
+_SQL_FOTO_FONDO = "select c.codigo_cafci, c.nombre, c.moneda, p.fecha_dato as fecha, case when p.marca_estado = '' then p.cuotaparte end as cuotaparte, case when p.marca_estado = '' then p.patrimonio end as patrimonio, case when p.marca_estado = '' then p.rend_mes end as mes, case when p.marca_estado = '' then p.rend_anio end as anio, case when p.marca_estado = '' then p.rend_12m end as meses_12, p.calificacion, p.marca_estado, c.honorarios_sg, c.honorarios_sd, c.gastos_ordinarios, c.comision_ingreso, c.comision_rescate, c.comision_transferencia, c.honorarios_exito from clases c left join foto_clases p using (codigo_cafci) where c.codigo_cnv=%s and c.vigente_hasta is null order by c.nombre"
+
+_SQL_REND_FONDO = 'select r.codigo_cafci, r.fecha, r.diario, r.dias_7, r.dias_30, r.mes, r.anio, r.meses_12, r.revisar, r.nota, v.cuotaparte, v.patrimonio from clases c join lateral (select codigo_cafci, fecha, diario, dias_7, dias_30, mes, anio, meses_12, revisar, nota from rendimientos where codigo_cafci = c.codigo_cafci order by fecha desc limit 1) r on true left join valores_diarios_ultima v on v.codigo_cafci = r.codigo_cafci and v.fecha = r.fecha where c.codigo_cnv = %s order by r.codigo_cafci'
+
+_SQL_HECHOS_FONDO = 'select fecha, tipo, descripcion, link from hechos_relevantes where codigo_cnv = %s order by fecha desc, documento desc'
+
+_SQL_FICHA_UNICA = "\n            select f.fecha_referencia, f.url, f.fuente, f.estado_lectura,\n              coalesce((select jsonb_agg(to_jsonb(c) || jsonb_build_object(\n                            'calificacion', p.calificacion, 'marca_estado', p.marca_estado) order by c.nombre)\n                        from clases c left join foto_clases p using (codigo_cafci)\n                        where c.codigo_cnv = f.codigo_cnv\n                        and c.vigente_hasta is null), '[]'::jsonb) as clases,\n              coalesce((select jsonb_agg(to_jsonb(d) - 'ficha_id' order by d.campo)\n                        from ficha_datos d where d.ficha_id = f.id), '[]'::jsonb) as datos,\n              coalesce((select jsonb_agg(to_jsonb(h) - 'ficha_id' order by h.concepto, h.clase)\n                        from ficha_honorarios h where h.ficha_id = f.id), '[]'::jsonb) as honorarios,\n              coalesce((select jsonb_agg(to_jsonb(t) - 'ficha_id' order by t.tipo, t.orden)\n                        from ficha_tenencias t where t.ficha_id = f.id), '[]'::jsonb) as tenencias\n            from fichas_unicas f where f.codigo_cnv = %s\n            order by f.fecha_referencia desc, f.fecha_captura desc, f.id desc limit 1\n        "

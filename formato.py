@@ -139,6 +139,12 @@ def tabla_ordenable(df, fechas=(), numeros=None, enteros=(), cortos=None, si_no_
 
 def plotly_es(fig, fechas_x=False):
     """Gráficos con coma decimal y punto de miles; si el eje x son fechas, las muestra dd/mm/aaaa."""
+    if isinstance(fig, dict):
+        layout = fig.setdefault('layout', {})
+        layout['separators'] = ',.'
+        if fechas_x:
+            layout.setdefault('xaxis', {}).update(tickformat='%d/%m/%Y', hoverformat='%d/%m/%Y')
+        return fig
     fig.update_layout(separators=",.")
     if fechas_x:
         fig.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y")
