@@ -1447,7 +1447,18 @@ def registrar_fallo_seguimiento(etapa, motivo, error):
     estado = estado if isinstance(estado, str) and re.fullmatch(r'[0-9A-Z]{5}', estado) else 'SIN_SQLSTATE'
     tipo = type(error).__name__
     tipo = tipo if re.fullmatch(r'[A-Za-z_]{1,80}', tipo) else 'Error'
-    logging.getLogger('seguimiento').log(logging.WARNING, 'SEGUIMIENTO %s %s %s %s', etapa, motivo, estado, tipo)
+    # Una clave arbitraria puede ser texto del usuario: publicar solo nombres del contrato.
+    claves = {'elecciones', 'textos', 'pedidos', 'clave', 'codigo_cnv', 'estado',
+              'organizacion', 'dueno', 'usuario', 'rol', 'version_clave', 'version',
+              'descripcion', 'idea', 'id_ficha', 'accion', 'version_esperada',
+              'version_textos_esperada', 'descripcion_breve', 'tematica',
+              'tematica_provisoria', 'auditoria', 'campos_textos'}
+    detalle = ''
+    if isinstance(error, KeyError):
+        clave = error.args[0] if error.args else None
+        detalle = ' clave=' + (clave if isinstance(clave, str) and clave in claves else 'NO_PUBLICABLE')
+    logging.getLogger('seguimiento').log(
+        logging.WARNING, 'SEGUIMIENTO %s %s %s %s%s', etapa, motivo, estado, tipo, detalle)
 
 
 def _contexto_seguimiento(resolver):
@@ -1639,7 +1650,7 @@ def solicitar_seguimiento(catalogo, repositorio, formulario, resolver=None):
                     and any(f['codigo_cnv'] == codigo for f in estado['elecciones'])):
                 raise ErrorSeguimiento('PERMISO_DENEGADO')
         for pedido in estado["pedidos"]:
-            if pedido["clave"] == clave:
+            if pedido.get("clave") == clave:
                 if any(pedido.get(k) != v for k, v in intencion.items()):
                     raise ErrorSeguimiento("IDEMPOTENCIA_INCOMPATIBLE")
                 return deepcopy(pedido)
