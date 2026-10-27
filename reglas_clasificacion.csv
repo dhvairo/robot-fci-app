@@ -57,3 +57,6 @@ orden;rubro_cnv;patron;categoria_resumen;categoria_detallada;moneda;indexacion;n
 131;cafci;^disponibilidades\b.*(usd|u\$s|dolares);Disponibilidades;Disponibilidades USD;USD;;
 132;cafci;^disponibilidades\b.*(pesos|ars);Disponibilidades;Disponibilidades ARS;ARS;;
 133;cafci;^disponibilidades\b;Disponibilidades;Disponibilidades (moneda no informada);;;
+9001;;(?!);ON;ON;;;IAMC Informe Diario 05-Oct-26: ticker completo o emisor y clase únicos. Completa faltantes y conserva categoría.
+9002;;(?!);ON;ON;;;Screenermatic 26/10/2026: ticker completo o emisor y clase únicos. IAMC tiene prioridad.
+9003;;(?!);FCI;FCI;;;Instrumento sin clasificar que empieza con FCI.

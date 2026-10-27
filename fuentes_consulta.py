@@ -3,6 +3,7 @@
 Al cambiar el robot, regenerar las funciones correspondientes antes de publicar.
 No incluye ejecutores, conexiones ni escritura de archivos.
 """
+from robot.clasificacion_tablas import completar
 import csv
 import html
 import html as _html
@@ -201,7 +202,7 @@ def _moneda(regla, rubro, moneda_fondo):
         return moneda_de_texto(moneda_fondo)
     return m or None
 
-def clasificar_linea(detalle, rubro, moneda_fondo, reglas):
+def _clasificar_reglas(detalle, rubro, moneda_fondo, reglas):
     """Devuelve un dict con categoria_resumen, categoria_detallada, moneda, indexacion, regla."""
     d, rb = normalizar(detalle), normalizar(rubro)
     candidatas = sorted(reglas, key=lambda r: (r["_rubro"] != "cafci", r["orden"])) if rb == "cafci" else reglas
@@ -224,7 +225,12 @@ def clasificar_linea(detalle, rubro, moneda_fondo, reglas):
     return {"categoria_resumen": SIN_CLASIFICAR, "categoria_detallada": SIN_CLASIFICAR,
             "moneda": None, "indexacion": None, "regla": None}
 
-def clasificar_cartera(cartera, reglas):
+def clasificar_linea(detalle, rubro, moneda_fondo, reglas, contadores=None):
+    """Clasificación común en ingesta; las reglas de organización se aplican después."""
+    return completar(_clasificar_reglas(detalle, rubro, moneda_fondo, reglas),
+                     detalle, rubro, contadores)
+
+def clasificar_cartera(cartera, reglas, tablas=True):
     """Clasifica las líneas que son tenencias: instrumentos y rubros sin detalle debajo.
 
     Devuelve una lista de filas (las de la cartera + las columnas de clasificación).
@@ -232,12 +238,16 @@ def clasificar_cartera(cartera, reglas):
     filas = cartera["filas"]
     con_hijos = {f["rubro"] for f in filas if f["nivel"] > 0}
     salida = []
+    contadores = {}
     for orden, f in enumerate(filas, start=1):
         if f["nivel"] == 0 and f["detalle"] in con_hijos:
             continue  # es un título de rubro con su detalle debajo
         pct = f["pct_pn"] if f["nivel"] > 0 else f["pct_rubro"]
-        c = clasificar_linea(f["detalle"], f["rubro"], cartera["moneda"], reglas)
+        c = (clasificar_linea(f["detalle"], f["rubro"], cartera["moneda"], reglas, contadores) if tablas
+             else _clasificar_reglas(f["detalle"], f["rubro"], cartera["moneda"], reglas))
         salida.append({**f, "orden": orden, "pct": pct, **c})
+    if contadores.get('conflictos_moneda'):
+        print(f"CLASIFICACION conflictos_moneda={contadores['conflictos_moneda']}")
     return salida
 
 # Fuente: robot/calcular_rendimientos.py

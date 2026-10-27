@@ -111,6 +111,8 @@ def mostrar_edicion_clasificacion(cart, vista, codigo, fecha):
         (o, por_orden.get(o, {}).get('identidad', {}).get('instrumento_id')) for o in cart.orden))
     st.caption('ítems clasificados por administrador · procedencia organización; los demás conservan la fuente.')
     st.caption('La fuente común combina datos de CNV y reglas comunes. '
+               'IAMC Informe Diario 05-Oct-26 (regla 9001), luego Screenermatic 26/10/2026 (9002): '
+               'ticker completo o emisor y clase únicos; las ediciones de la organización tienen prioridad. '
                'La observación inicial no reconstruye clasificaciones históricas.')
     if motivo:
         st.caption(motivo)
