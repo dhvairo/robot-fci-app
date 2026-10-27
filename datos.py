@@ -1100,6 +1100,7 @@ def _limpiar_comunes():
         _consultar_comun.clear()
         _serie_comun.clear()
         _indice_clases_comunes.clear()
+        _clases_reglamento_comunes.clear()
         _historia_fondo_comun.clear()
         _rendimientos_fondo_comun.clear()
         _HISTORIAS_COMPLETAS.clear()
@@ -1224,7 +1225,7 @@ def _clases_gestion_comunes():
 
 def _clases_vigentes_comunes():
     """Una sola lectura común de todas las clases vigentes; el Comparador no consulta fondo por fondo."""
-    clases = consultar("""select c.codigo_cnv, c.codigo_cafci, c.nombre, c.moneda,
+    sql = """select c.codigo_cnv, c.codigo_cafci, c.nombre, c.moneda,
         a.patrimonio_ultimo, a.cantidad_min, a.cantidad_max
         from clases c left join (
             select codigo_cafci, (array_agg(patrimonio order by fecha desc))[1] as patrimonio_ultimo,
@@ -1233,10 +1234,29 @@ def _clases_vigentes_comunes():
             from valores_diarios_ultima where fecha between current_date - 29 and current_date
             group by codigo_cafci
         ) a using (codigo_cafci)
-        where c.vigente_hasta is null order by c.nombre""")
+        where c.vigente_hasta is null order by c.nombre"""
+    clases = _clases_reglamento_comunes(version_comun(), sql).copy()
     if {'cantidad_min', 'cantidad_max', 'patrimonio_ultimo'} <= set(clases):
         clases['activa'] = clases.codigo_cafci.map(calculos.actividad_clases(clases)).fillna(False)
     return clases
+
+
+@st.cache_resource(max_entries=4, show_spinner=False)
+def _clases_reglamento_comunes(version, sql):
+    """Amplía el viaje de clases. Tabla ausente: respaldo una vez por versión, sin consultas en reruns."""
+    ampliado = sql.replace('a.patrimonio_ultimo,', 'r._reglamentos, a.patrimonio_ultimo,').replace(
+        'where c.vigente_hasta', """left join (
+            select r.codigo_cnv, jsonb_agg(r.datos) as _reglamentos
+            from reglamento_clases r join reglamentos_fondos f
+                on f.codigo_cnv=r.codigo_cnv and f.sha256=r.sha256
+            group by r.codigo_cnv
+        ) r on r.codigo_cnv=c.codigo_cnv where c.vigente_hasta""")
+    try:
+        # No registrar SQL opcional fallido en el refresco masivo U129.
+        clases = consultar(ampliado, registrar=False)
+    except (psycopg.errors.UndefinedTable, psycopg.errors.InsufficientPrivilege):
+        clases = consultar(sql)
+    return calculos.anexar_reglamentos(clases)
 
 
 
@@ -1251,7 +1271,8 @@ def _indice_clases_comunes(version):
     todas = _clases_vigentes_comunes()
     if todas.empty:
         return {}
-    return {str(c): g[[c for c in ('codigo_cafci', 'nombre', 'moneda', 'activa') if c in g]].reset_index(drop=True)
+    return {str(c): g[[c for c in ('codigo_cafci', 'nombre', 'moneda', 'activa',
+            'destinatario', 'detalle_reglamento') if c in g]].reset_index(drop=True)
             for c, g in todas.groupby('codigo_cnv')}
 
 

@@ -359,7 +359,13 @@ with datos.seccion_disponible():
             st.caption("Sin clases con movimiento comprobado en 30 días: se muestran todas.")
         elegidas = st.multiselect("Clases a mostrar", clases["nombre"].tolist(),
                                   default=por_defecto["nombre"].tolist(),
+                                  format_func=lambda n: calculos.etiqueta_destinatario(n,
+                                      clases.set_index('nombre').get('destinatario', {}).get(n, '')),
                                   help="Por defecto clases con patrimonio y movimiento en 30 días. La lista permite elegir todas las clases.")
+        detalle_clases = calculos.detalle_destinatarios(clases)
+        if not detalle_clases.empty:
+            with st.expander('Destinatarios por clase · fuente y fecha'):
+                st.dataframe(detalle_clases, hide_index=True, width='stretch')
         sel = clases[clases["nombre"].isin(elegidas)]
         clases_sel = tuple(elegidas)
         if len(sel):
@@ -381,6 +387,9 @@ with datos.seccion_disponible():
                                           "mes": "Mes %", "anio": "Año %", "meses_12": "12 meses %"})
             cols = ["Clase", "Moneda", "Fecha", "Cuotaparte", "Patrimonio", "Diario %", "7 días %",
                     "30 días %", "Mes %", "Año %", "12 meses %"]
+            if 'destinatario' in sel and sel.destinatario.fillna('').ne('').any():
+                tabla['Destinatario'] = tabla.Clase.map(sel.set_index('nombre').destinatario)
+                cols.insert(1, 'Destinatario')
             tabla_pdf = formato.tabla(tabla[cols], fechas=["Fecha"], enteros=["Patrimonio"],
                                        numeros={"Cuotaparte": 4, **{c: 2 for c in cols if c.endswith("%")}})
             mostrar_tabla(tabla_pdf,

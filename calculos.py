@@ -451,6 +451,55 @@ def enviar_al_informe(sesion, codigos):
         sesion[SELECCION_INFORME] = nuevos
 
 
+def anexar_reglamentos(clases):
+    """Empareja solo una clase explícita y única. Las pistas del nombre nunca son confirmación."""
+    if '_reglamentos' not in clases:
+        return clases
+    clases = clases.copy()
+    destinatarios, detalles = [], []
+    for fila in clases.to_dict('records'):
+        nombre = str(fila.get('nombre') or '')
+        ley = re.search(r'\bclase\s+ley\s+(?:N[º°o.]?\s*)?27[.]?743', nombre, re.I)
+        token = re.search(r'\bclase\s+([^\W_]+)', nombre, re.I)
+        clave = 'LEY 27.743' if ley else token[1].upper() if token else None
+        registros = fila.get('_reglamentos')
+        candidatos = [r for r in registros if r.get('clase') == clave] if isinstance(registros, list) else []
+        r = candidatos[0] if len(candidatos) == 1 else {}
+        # A revisar: se muestra el estado, nunca una elegibilidad inferida como cierta.
+        corto = ('A revisar' if r.get('estado') == 'a_revisar' else r.get('destinatario', ''))
+        detalle = ''
+        if r:
+            detalle = (f"{r.get('fuente_documento', '')} · {r.get('fecha_reglamento') or 'fecha no informada'}"
+                f" · {r.get('fuente', '')}"
+                + (f" · revisión {r['fecha_revision']}" if r.get('fecha_revision') else '')
+                + f" · {r.get('texto_origen', '')} · {r.get('url', '')}")
+        destinatarios.append(corto)
+        detalles.append(detalle)
+    clases['destinatario'], clases['detalle_reglamento'] = destinatarios, detalles
+    return clases.drop(columns='_reglamentos')
+
+
+def etiqueta_destinatario(nombre, destinatario):
+    return str(nombre) + (' · ' + str(destinatario) if isinstance(destinatario, str) and destinatario else '')
+
+
+def detalle_destinatarios(clases):
+    if 'destinatario' not in clases or not clases.destinatario.fillna('').ne('').any():
+        return pd.DataFrame()
+    cols = [c for c in ('nombre_fondo', 'nombre', 'destinatario', 'detalle_reglamento') if c in clases]
+    return clases.loc[clases.destinatario.fillna('').ne(''), cols].rename(columns={
+        'nombre_fondo': 'Fondo', 'nombre': 'Clase', 'destinatario': 'Destinatario', 'detalle_reglamento': 'Fuente y fecha'})
+
+
+def etiquetas_grupos_clases(clases):
+    grupos = agrupar_clases_comparador(clases)
+    if 'destinatario' not in clases:
+        return {n: n for n in grupos.unique()}
+    textos = clases.assign(_grupo=grupos).groupby('_grupo').destinatario.agg(
+        lambda s: ' / '.join(sorted(set(s.dropna()) - {''})))
+    return {n: etiqueta_destinatario(n, t) for n, t in textos.items()}
+
+
 def clases_comparador(fondos, moneda, leer_clases):
     partes = []
     registros = fondos.to_dict('records')

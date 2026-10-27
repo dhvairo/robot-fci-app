@@ -46,7 +46,8 @@ if isinstance(memoria_clases, dict):
 grupos_preferidos = ([datos.clases_preferidas(g) for _, g in catalogo_clases.groupby('codigo_cnv')]
                      if 'codigo_cnv' in catalogo_clases else [])
 preferidas = pd.concat(grupos_preferidos, ignore_index=True) if grupos_preferidos else catalogo_clases
-elegidas = filtros.lista_fondos('Clase', {n: n for n in nombres_clases}, 'comparador_clases',
+etiquetas_clases = calculos.etiquetas_grupos_clases(catalogo_clases)
+elegidas = filtros.lista_fondos('Clase', {n: etiquetas_clases.get(n, n) for n in nombres_clases}, 'comparador_clases',
                                vacio_todos=False, conservar_orden=True)
 base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento, multiple=True)
 monedas = list(st.session_state['comparador_filtro_1'])
@@ -95,6 +96,10 @@ if len(sel) > 30:
     st.warning("Se muestran las primeras 30 clases como máximo. Afiná la selección para elegir otras.")
     sel = sel.iloc[:30]
 fondos = fondos[fondos.codigo_cnv.isin(sel.codigo_cnv)]
+detalle_clases = calculos.detalle_destinatarios(sel)
+if not detalle_clases.empty:
+    with st.expander('Destinatarios por clase · fuente y fecha'):
+        st.dataframe(detalle_clases, hide_index=True, width='stretch')
 modo = st.radio("Qué comparar", ["R", "P", "R y P"], horizontal=True,
                 format_func=lambda x: {"R": "Rendimiento (R)", "P": "Patrimonio (P)", "R y P": "R y P"}[x])
 if 'comparador_llevar' not in st.session_state:
@@ -202,6 +207,8 @@ with barras_lugar:
             rapidez.grafico_memorizado('comparador_barras_grafico_' + tipo, figura_barras,
                 *seleccion, str(hasta), tuple((c['codigo'], c['visible']) for c in controles), bool(fondos.seguido.all()))
 
+if 'destinatario' in visibles and visibles.destinatario.fillna('').ne('').any():
+    mostrar.insert(1, 'Destinatario', mostrar.Clase.map(visibles.set_index('etiqueta').destinatario))
 tabla = formato.tabla(mostrar, fechas=[c for c in ("Desde", "Hasta", "Fecha del patrimonio") if c in mostrar],
                       enteros=[c for c in ("Datos", "Último valor de patrimonio") if c in mostrar],
                       numeros={"Rendimiento %": 2} if "Rendimiento %" in mostrar else {})
