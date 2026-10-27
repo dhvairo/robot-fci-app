@@ -480,7 +480,10 @@ def anexar_reglamentos(clases):
 
 
 def etiqueta_destinatario(nombre, destinatario):
-    return str(nombre) + (' · ' + str(destinatario) if isinstance(destinatario, str) and destinatario else '')
+    corto = destinatario if isinstance(destinatario, str) else ''
+    if len(corto) > 80:
+        corto = corto[:79].rstrip() + '…'
+    return str(nombre) + (' · ' + corto if corto else '')
 
 
 def detalle_destinatarios(clases):
