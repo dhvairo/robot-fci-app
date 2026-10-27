@@ -46,7 +46,8 @@ if isinstance(memoria_clases, dict):
 grupos_preferidos = ([datos.clases_preferidas(g) for _, g in catalogo_clases.groupby('codigo_cnv')]
                      if 'codigo_cnv' in catalogo_clases else [])
 preferidas = pd.concat(grupos_preferidos, ignore_index=True) if grupos_preferidos else catalogo_clases
-etiquetas_clases = calculos.etiquetas_grupos_clases(catalogo_clases)
+etiquetas_clases = rapidez.leer_comun('COMPARADOR_ETIQUETAS_CLASES',
+    lambda: calculos.etiquetas_grupos_clases(catalogo_clases)) if 'destinatario' in catalogo_clases else {}
 elegidas = filtros.lista_fondos('Clase', {n: etiquetas_clases.get(n, n) for n in nombres_clases}, 'comparador_clases',
                                vacio_todos=False, conservar_orden=True)
 base = filtros.mostrar(todos, clave="comparador", persistente=True, inicial=inicial_seguimiento, multiple=True)
@@ -99,7 +100,7 @@ fondos = fondos[fondos.codigo_cnv.isin(sel.codigo_cnv)]
 detalle_clases = calculos.detalle_destinatarios(sel)
 if not detalle_clases.empty:
     with st.expander('Destinatarios por clase · fuente y fecha'):
-        st.dataframe(detalle_clases, hide_index=True, width='stretch')
+        st.text(calculos.texto_detalle_destinatarios(detalle_clases))
 modo = st.radio("Qué comparar", ["R", "P", "R y P"], horizontal=True,
                 format_func=lambda x: {"R": "Rendimiento (R)", "P": "Patrimonio (P)", "R y P": "R y P"}[x])
 if 'comparador_llevar' not in st.session_state:

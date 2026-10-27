@@ -357,15 +357,16 @@ with datos.seccion_disponible():
         por_defecto = datos.clases_preferidas(clases)
         if por_defecto.attrs.get("sin_activas"):
             st.caption("Sin clases con movimiento comprobado en 30 días: se muestran todas.")
+        destinatarios_clases = dict(zip(clases.nombre, clases.destinatario)) if 'destinatario' in clases else {}
         elegidas = st.multiselect("Clases a mostrar", clases["nombre"].tolist(),
                                   default=por_defecto["nombre"].tolist(),
                                   format_func=lambda n: calculos.etiqueta_destinatario(n,
-                                      clases.set_index('nombre').get('destinatario', {}).get(n, '')),
+                                      destinatarios_clases.get(n, '')),
                                   help="Por defecto clases con patrimonio y movimiento en 30 días. La lista permite elegir todas las clases.")
         detalle_clases = calculos.detalle_destinatarios(clases)
         if not detalle_clases.empty:
             with st.expander('Destinatarios por clase · fuente y fecha'):
-                st.dataframe(detalle_clases, hide_index=True, width='stretch')
+                st.text(calculos.texto_detalle_destinatarios(detalle_clases))
         sel = clases[clases["nombre"].isin(elegidas)]
         clases_sel = tuple(elegidas)
         if len(sel):

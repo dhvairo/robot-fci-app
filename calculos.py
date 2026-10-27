@@ -491,6 +491,10 @@ def detalle_destinatarios(clases):
         'nombre_fondo': 'Fondo', 'nombre': 'Clase', 'destinatario': 'Destinatario', 'detalle_reglamento': 'Fuente y fecha'})
 
 
+def texto_detalle_destinatarios(detalle):
+    return '\n\n'.join(' · '.join(str(v) for v in fila.values()) for fila in detalle.to_dict('records'))
+
+
 def etiquetas_grupos_clases(clases):
     grupos = agrupar_clases_comparador(clases)
     if 'destinatario' not in clases:
